@@ -95,7 +95,19 @@ curl -fsSL https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-
 创建系统用户与 `/var/lib/hejiu45-oss` → 生成主密钥 → 写入加固的 systemd
 单元 → 启动服务。初始管理员密码由服务在首次启动时打印一次。
 
-#### Windows（管理员 PowerShell，一条命令）
+#### Windows
+
+只想本机跑起来看控制台，下载官方 exe 直接执行即可（**无需安装任何构建工具**）：
+
+```powershell
+.\hejiu45-oss.exe --data-dir .\data --listen 127.0.0.1:9000 --allow-insecure --admin-password "YourPass-123456"
+```
+
+然后浏览器打开 <http://127.0.0.1:9000>，用 `admin` / 该密码登录。
+逐步说明（含从源码构建、装成服务）见下文
+[**Windows 上启动**](#windows-上启动不装服务推荐先这样试)。
+
+要开机自启、装成 Windows 服务，用管理员 PowerShell 一条命令：
 
 ```powershell
 irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows.ps1 | iex
@@ -103,6 +115,59 @@ irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows
 
 安装到 `Program Files`、收紧数据目录 ACL，并通过固定版本的 WinSW 注册服务
 （`-Mode task` 则改用计划任务，不引入额外组件）。
+
+#### Windows 上启动（不装服务，推荐先这样试）
+
+**方式 1：直接下载官方二进制（最快，无需任何构建工具）**
+
+1. 打开 <https://github.com/Hejiu-Web/hejiu45-oss/releases/latest>，下载
+   `hejiu45-oss-windows-amd64.exe`。
+2. 放到一个固定目录，例如 `C:\hejiu45\`，并改名为 `hejiu45-oss.exe`。
+3. 在该目录打开 PowerShell，启动：
+
+   ```powershell
+   .\hejiu45-oss.exe --data-dir .\data --listen 127.0.0.1:9000 --allow-insecure --admin-password "YourPass-123456"
+   ```
+
+4. 看到 `serving HTTP addr=127.0.0.1:9000` 后，浏览器打开
+   <http://127.0.0.1:9000>，用 `admin` / 你设置的密码登录。
+
+要点：
+
+- `--data-dir .\data`：对象、元数据库、`master.key` 全部落在这里。
+  **这个目录要备份**，丢了 `master.key` 就等于丢失所有 S3 密钥。
+- `--allow-insecure` 只用于本机 HTTP 试跑。要让局域网或公网访问，
+  必须走 TLS（见下文），否则会话 Cookie 不会带 `Secure`。
+- 不传 `--admin-password` 会自动生成随机密码，**只在首次启动打印一次**，
+  记得复制保存。
+- 同一个数据目录只能有一个实例（进程级文件锁），重复启动会直接报错退出——
+  这是保护，不是故障。要跑第二个实例，换 `--data-dir` 和 `--listen`。
+
+**方式 2：从源码构建**
+
+需要 Rust 1.85+、Node.js 20+，以及 C++ 生成工具 + NASM（`aws-lc-rs` 要编译 C/汇编）。
+
+```powershell
+git clone https://github.com/Hejiu-Web/hejiu45-oss
+cd hejiu45-oss
+cd frontend; npm ci; npm run build; cd ..    # 必须先构建前端：编译期嵌入
+cargo build --release
+.\target\release\hejiu45-oss.exe --data-dir .\data --listen 127.0.0.1:9000 --allow-insecure
+```
+
+> NASM 不在 `PATH` 时会报 `nasm not found`。装完把它加进 `PATH` 再重开终端。
+
+**方式 3：装成 Windows 服务（开机自启）**
+
+管理员 PowerShell 里跑安装脚本，它会下载并校验二进制、收紧数据目录 ACL、
+通过固定版本的 WinSW 注册服务：
+
+```powershell
+irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows.ps1 | iex
+```
+
+不想引入 WinSW 时用 `-Mode task` 改建计划任务。
+
 
 #### 从源码构建
 
@@ -328,6 +393,18 @@ curl -fsSL https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-
 
 # Windows — elevated PowerShell; installs a WinSW-backed service
 irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows.ps1 | iex
+```
+
+Just want to try it on Windows? Download the release `.exe` and run it — no
+toolchain required:
+
+```powershell
+.\hejiu45-oss.exe --data-dir .\data --listen 127.0.0.1:9000 --allow-insecure --admin-password "YourPass-123456"
+```
+
+Then open <http://127.0.0.1:9000> and sign in as `admin`. Step-by-step notes
+(building from source, installing a service) are in
+[**Start it on Windows**](#start-it-on-windows-without-installing-a-service).
 
 # From source (build the console FIRST: it is embedded at compile time)
 cd frontend && npm ci && npm run build && cd ..
@@ -337,6 +414,60 @@ cargo build --release
 
 Open <http://127.0.0.1:9000>; the initial admin password is printed once on
 first start.
+
+### Start it on Windows (without installing a service)
+
+**Option 1: run the released binary (no toolchain needed)**
+
+1. Download `hejiu45-oss-windows-amd64.exe` from
+   <https://github.com/Hejiu-Web/hejiu45-oss/releases/latest>.
+2. Put it in a stable folder such as `C:\hejiu45\` and rename it to
+   `hejiu45-oss.exe`.
+3. In PowerShell, from that folder:
+
+   ```powershell
+   .\hejiu45-oss.exe --data-dir .\data --listen 127.0.0.1:9000 --allow-insecure --admin-password "YourPass-123456"
+   ```
+
+4. Once it logs `serving HTTP addr=127.0.0.1:9000`, open
+   <http://127.0.0.1:9000> and sign in as `admin` with that password.
+
+Notes:
+
+- `--data-dir .\data` holds objects, the metadata database and `master.key`.
+  **Back that folder up**: losing `master.key` makes every stored S3 secret
+  unreadable.
+- `--allow-insecure` is for a local HTTP trial only. Anything reachable from
+  the network must use TLS, otherwise the session cookie is not marked
+  `Secure`.
+- Omit `--admin-password` to have a random one generated and printed **once**.
+- One data directory serves one process at a time (an OS file lock); a second
+  instance exits with an error. That is a guard, not a fault. Use separate
+  `--data-dir` and `--listen` values for a second instance.
+
+**Option 2: build from source** (Rust 1.85+, Node.js 20+, plus MSVC build tools
+and NASM because `aws-lc-rs` compiles C and assembly):
+
+```powershell
+git clone https://github.com/Hejiu-Web/hejiu45-oss
+cd hejiu45-oss
+cd frontend; npm ci; npm run build; cd ..
+cargo build --release
+.\target\release\hejiu45-oss.exe --data-dir .\data --listen 127.0.0.1:9000 --allow-insecure
+```
+
+Building the console first is mandatory: `rust-embed` reads `frontend/dist/`
+at compile time. If NASM is missing you get `nasm not found`; add it to `PATH`
+and reopen the terminal.
+
+**Option 3: install as a service (starts on boot)** — elevated PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows.ps1 | iex
+```
+
+The script verifies the download, tightens the data-directory ACL and registers
+a WinSW-backed service (`-Mode task` uses a scheduled task instead).
 
 ### Connect a client
 
