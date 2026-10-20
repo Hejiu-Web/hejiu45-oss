@@ -307,7 +307,12 @@ impl TestServer {
         let mut raw = Vec::new();
         // A hang here would look like a crash in CI (the harness kills the
         // binary), so cap the wait and report what arrived.
-        match tokio::time::timeout(std::time::Duration::from_secs(20), stream.read_to_end(&mut raw)).await {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            stream.read_to_end(&mut raw),
+        )
+        .await
+        {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => panic!("read failed: {e}"),
             Err(_) => panic!("timed out waiting for a response"),
