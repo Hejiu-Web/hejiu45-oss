@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { onMounted, ref } from 'vue'
 import { api, state } from '../store.js'
 import { ago, bytes, duration } from '../format.js'

@@ -1,4 +1,4 @@
-﻿// Minimal reactive store + API client. Plain JavaScript, no dependencies
+// Minimal reactive store + API client. Plain JavaScript, no dependencies
 // beyond Vue itself.
 
 import { reactive } from 'vue'

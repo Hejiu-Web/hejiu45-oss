@@ -1,4 +1,4 @@
-﻿# End-to-end S3 compatibility test for hejiu45-oss.
+# End-to-end S3 compatibility test for hejiu45-oss.
 #
 # Signs real SigV4 requests and asserts responses. Works on Windows PowerShell
 # 5.1 and PowerShell 7: HTTP goes through curl.exe so behaviour does not depend

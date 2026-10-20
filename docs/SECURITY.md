@@ -1,4 +1,4 @@
-﻿# Security model
+# Security model
 
 This document describes what `hejiu45-oss` protects, what it does not, and the
 reasoning behind the controls. It is the reference for operators and auditors.

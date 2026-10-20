@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 # Real AWS CLI compatibility test.
 #
 # Unlike e2e-s3.ps1 (which signs requests by hand to prove our verifier against

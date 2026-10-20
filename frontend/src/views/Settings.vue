@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, state, toast } from '../store.js'

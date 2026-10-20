@@ -1,4 +1,4 @@
-﻿# Contributing
+# Contributing
 
 Thanks for taking a look. This project values small, reviewable changes and
 explicit reasoning over clever code.

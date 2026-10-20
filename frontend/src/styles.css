@@ -1,4 +1,4 @@
-﻿/* Design tokens and base styles for the console.
+/* Design tokens and base styles for the console.
  *
  * Deliberately a single hand-written stylesheet instead of a component
  * framework: the bundle is embedded into the server binary and every kilobyte

@@ -1,4 +1,4 @@
-﻿# Multi-stage build: the console is compiled into the binary, so stage 1 builds
+# Multi-stage build: the console is compiled into the binary, so stage 1 builds
 # the frontend and stage 2 is just the Rust build plus a tiny runtime image.
 FROM node:22-alpine AS console
 WORKDIR /src/frontend
