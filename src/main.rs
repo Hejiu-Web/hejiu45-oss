@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use hejiu45_oss::config::{Args, TlsMode, PRODUCT};
-use hejiu45_oss::crypto::{self, SecretBox, hash_admin_password, MasterKeySource};
+use hejiu45_oss::config::{Args, PRODUCT, TlsMode};
+use hejiu45_oss::crypto::{self, MasterKeySource, SecretBox, hash_admin_password};
 use hejiu45_oss::data::Data;
 use hejiu45_oss::meta::{ADMIN_USERS, AdminUser, Meta};
 use hejiu45_oss::state::{AppState, now_rfc3339};
@@ -35,7 +35,16 @@ fn init_tracing(filter: &str) {
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
-    info!(version = env!("CARGO_PKG_VERSION"), product = PRODUCT, "starting");
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        product = PRODUCT,
+        "starting"
+    );
+
+    // rustls requires an explicit crypto provider when more than one could be
+    // compiled in; we standardise on AWS-LC (the same library backing the
+    // AEAD/HKDF usage in `crypto.rs`).
+    let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // Offline maintenance modes run before anything binds a port.
     if let Some(dest) = &args.backup_to {
@@ -51,10 +60,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
 
     let _lock = acquire_data_lock(&args.data_dir)?;
-    let (master, key_source) = crypto::load_or_create_master_key(
-        args.master_key.as_deref(),
-        &args.data_dir,
-    )?;
+    let (master, key_source) =
+        crypto::load_or_create_master_key(args.master_key.as_deref(), &args.data_dir)?;
     match key_source {
         MasterKeySource::GeneratedFile => warn!(
             path = %crypto::master_key_path(&args.data_dir).display(),
@@ -194,12 +201,23 @@ fn acquire_data_lock(dir: &std::path::Path) -> anyhow::Result<DataLock> {
         use std::io::Read;
         let mut existing = String::new();
         let _ = std::fs::File::open(&path).and_then(|mut f| f.read_to_string(&mut existing));
-        if let Some(pid) = existing.trim().parse::<u32>().ok().filter(|p| pid_alive(*p)) {
-            anyhow::bail!("another {PRODUCT} instance (pid {pid}) is already using {}", dir.display());
+        if let Some(pid) = existing
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|p| pid_alive(*p))
+        {
+            anyhow::bail!(
+                "another {PRODUCT} instance (pid {pid}) is already using {}",
+                dir.display()
+            );
         }
         std::fs::write(&path, std::process::id().to_string())?;
     }
-    Ok(DataLock { path, file: Some(file) })
+    Ok(DataLock {
+        path,
+        file: Some(file),
+    })
 }
 
 #[cfg(unix)]
@@ -247,8 +265,7 @@ fn init_access_key(
     use hejiu45_oss::meta::{BUCKETS, BucketMeta, BucketPerms};
     let (rec, secret) = auth.create_access_key(label, "cli", None)?;
     if let Some(bucket) = &args.init_bucket {
-        hejiu45_oss::data::validate_bucket_name(bucket)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        hejiu45_oss::data::validate_bucket_name(bucket).map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let mut b: BucketMeta = match meta.get_json(BUCKETS, bucket)? {
             Some(existing) => existing,
             None => BucketMeta {
@@ -295,4 +312,3 @@ fn restore(src: &std::path::Path, data_dir: &std::path::Path) -> anyhow::Result<
     println!("restore the `objects/` directory from your backup as well.");
     Ok(())
 }
-

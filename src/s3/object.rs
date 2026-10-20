@@ -1,4 +1,4 @@
-//! S3 object operations: PUT, GET, HEAD, DELETE, COPY, and multipart parts.
+﻿//! S3 object operations: PUT, GET, HEAD, DELETE, COPY, and multipart parts.
 //!
 //! All handlers assume the caller already verified the signature and passed
 //! [`crate::s3::handlers::S3Request::authenticate`].
@@ -12,12 +12,12 @@ use axum::response::{IntoResponse, Response};
 use futures_util::TryStreamExt;
 use tokio::io::AsyncWriteExt;
 
-use crate::data::{validate_object_key, StoredObject};
+use crate::data::{StoredObject, validate_object_key};
 use crate::error::{S3Error, xml_escape};
 use crate::meta::{BucketPerms, MULTIPARTS, MultipartUpload, OBJECTS, ObjectMeta, composite_key};
 use crate::s3::handlers::{
-    S3Request, adjust_bucket_stats, collect_stored_headers, collect_user_meta, delete_single_object,
-    etag_quoted, load_bucket, load_object,
+    S3Request, adjust_bucket_stats, collect_stored_headers, collect_user_meta,
+    delete_single_object, etag_quoted, load_bucket, load_object,
 };
 use crate::s3::query::ByteRange;
 use crate::s3::xml::{self, XmlReader};
@@ -59,23 +59,18 @@ async fn dispatch_inner(
     match (method, sub.as_deref()) {
         (Method::GET, None) => get_object(st, &s3, bucket, &key, req.headers()).await,
         (Method::HEAD, None) => head_object(st, &s3, bucket, &key),
-        (Method::PUT, _) if has_upload_id => {
-            upload_part(st, &s3, bucket, &key, req).await
-        }
+        (Method::PUT, _) if has_upload_id => upload_part(st, &s3, bucket, &key, req).await,
         (Method::PUT, _) => put_object(st, &s3, bucket, &key, req).await,
         (Method::POST, Some("uploads")) => Err(S3Error::invalid_request(
             "CreateMultipartUpload is a bucket-level operation (POST /{bucket}?uploads&key=...).",
         )),
-        (Method::POST, _) if has_upload_id => {
-            complete_multipart(st, &s3, bucket, &key, req).await
-        }
+        (Method::POST, _) if has_upload_id => complete_multipart(st, &s3, bucket, &key, req).await,
         (Method::GET, Some("uploads")) => list_multipart_uploads(st, &s3, bucket),
-        (Method::DELETE, _) if has_upload_id => {
-            abort_multipart(st, &s3, bucket, &key).await
-        }
+        (Method::DELETE, _) if has_upload_id => abort_multipart(st, &s3, bucket, &key).await,
         (Method::DELETE, None) => delete_object(st, &s3, bucket, &key).await,
         (m, sub) => Err(S3Error::not_implemented(
-            &sub.map(|s| format!("{} {s}", m.as_str())).unwrap_or_else(|| m.to_string()),
+            &sub.map(|s| format!("{} {s}", m.as_str()))
+                .unwrap_or_else(|| m.to_string()),
         )),
     }
 }
@@ -122,7 +117,10 @@ async fn put_object(
             .unwrap_or_else(|_| HeaderValue::from_static("\"\"")),
     );
     for (k, v) in s3.response_headers().into_iter() {
-        if let (Ok(n), Ok(val)) = (header::HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v)) {
+        if let (Ok(n), Ok(val)) = (
+            header::HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(&v),
+        ) {
             res.headers_mut().insert(n, val);
         }
     }
@@ -257,12 +255,9 @@ async fn get_object(
                 (r.start, r.len(), StatusCode::PARTIAL_CONTENT)
             }
         }
-        Some(Ok(Some(Err(())))) | Some(Err(())) => {
-            let mut res = S3Error::invalid_argument(
-                "Range",
-                range.unwrap_or_default(),
-            )
-            .into_response();
+        Some(Ok(Some(Err(_)))) | Some(Err(_)) => {
+            let mut res =
+                S3Error::invalid_argument("Range", range.unwrap_or_default()).into_response();
             *res.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
             if let Ok(v) = HeaderValue::from_str(&format!("bytes */{}", meta.size)) {
                 res.headers_mut().insert(header::CONTENT_RANGE, v);
@@ -304,14 +299,22 @@ async fn get_object(
     }
     apply_object_headers(&mut res, &meta);
     for (k, v) in s3.response_headers().into_iter() {
-        if let (Ok(n), Ok(val)) = (header::HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v)) {
+        if let (Ok(n), Ok(val)) = (
+            header::HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(&v),
+        ) {
             res.headers_mut().insert(n, val);
         }
     }
     Ok(res)
 }
 
-fn head_object(st: &AppState, s3: &S3Request, bucket: &str, key: &str) -> Result<Response, S3Error> {
+fn head_object(
+    st: &AppState,
+    s3: &S3Request,
+    bucket: &str,
+    key: &str,
+) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
     if !b.is_public_read() {
         st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
@@ -416,12 +419,23 @@ fn upload_key(bucket: &str, upload_id: &str) -> String {
     format!("{bucket}\u{0}{upload_id}")
 }
 
-fn load_upload(st: &AppState, bucket: &str, key: &str, upload_id: &str) -> Result<MultipartUpload, S3Error> {
+fn load_upload(
+    st: &AppState,
+    bucket: &str,
+    key: &str,
+    upload_id: &str,
+) -> Result<MultipartUpload, S3Error> {
     let up: MultipartUpload = st
         .meta
         .get_json(MULTIPARTS, &upload_key(bucket, upload_id))
         .map_err(S3Error::internal)?
-        .ok_or_else(|| S3Error::new(StatusCode::NOT_FOUND, "NoSuchUpload", "The specified upload does not exist."))?;
+        .ok_or_else(|| {
+            S3Error::new(
+                StatusCode::NOT_FOUND,
+                "NoSuchUpload",
+                "The specified upload does not exist.",
+            )
+        })?;
     if up.key != key {
         return Err(S3Error::new(
             StatusCode::NOT_FOUND,
@@ -450,7 +464,10 @@ async fn upload_part(
         .map_err(|e| S3Error::invalid_argument("partNumber", &e.to_string()))?
         .ok_or_else(|| S3Error::invalid_argument("partNumber", ""))?;
     if !(1..=10_000).contains(&part_number) {
-        return Err(S3Error::invalid_argument("partNumber", &part_number.to_string()));
+        return Err(S3Error::invalid_argument(
+            "partNumber",
+            &part_number.to_string(),
+        ));
     }
     let b = load_bucket(st, bucket)?;
     st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
@@ -462,7 +479,11 @@ async fn upload_part(
         .map_err(std::io::Error::other);
     let reader = tokio_util::io::StreamReader::new(stream);
     let stored = match s3.expected_body_sha256() {
-        Some(want) => st.data.stage_verified(reader, Some(MAX_PART_BYTES), want).await?,
+        Some(want) => {
+            st.data
+                .stage_verified(reader, Some(MAX_PART_BYTES), want)
+                .await?
+        }
         None => st.data.stage(reader, Some(MAX_PART_BYTES)).await?,
     };
     // Move the staged part into the upload directory under its part number.
@@ -522,23 +543,31 @@ async fn complete_multipart(
         })
         .collect();
     if requested.is_empty() {
-        return Err(S3Error::malformed_xml("CompleteMultipartUpload requires at least one <Part>."));
+        return Err(S3Error::malformed_xml(
+            "CompleteMultipartUpload requires at least one <Part>.",
+        ));
     }
     // Every requested part must exist, in ascending order (S3 validates this).
     let mut prev = 0u32;
     for n in &requested {
         if *n <= prev {
-            return Err(S3Error::invalid_request("Part numbers must be in ascending order."));
+            return Err(S3Error::invalid_request(
+                "Part numbers must be in ascending order.",
+            ));
         }
         prev = *n;
         if !up.parts.contains_key(n) {
-            return Err(S3Error::invalid_request(format!("Part {n} was not uploaded.")));
+            return Err(S3Error::invalid_request(format!(
+                "Part {n} was not uploaded."
+            )));
         }
     }
 
     // Concatenate parts in order into a staged object.
     let staged = st.data.new_tmp_path();
-    let mut out = tokio::fs::File::create(&staged).await.map_err(S3Error::internal)?;
+    let mut out = tokio::fs::File::create(&staged)
+        .await
+        .map_err(S3Error::internal)?;
     let mut total = 0u64;
     for n in &requested {
         let part_path = st.data.multipart_part_path(&upload_id, *n);
@@ -554,7 +583,9 @@ async fn complete_multipart(
     out.sync_all().await.map_err(S3Error::internal)?;
     drop(out);
 
-    let (sha, md5) = crate::data::hash_file(&staged).await.map_err(S3Error::internal)?;
+    let (sha, md5) = crate::data::hash_file(&staged)
+        .await
+        .map_err(S3Error::internal)?;
     let stored = StoredObject {
         size: total,
         sha256: sha,
@@ -582,7 +613,9 @@ async fn complete_multipart(
     finalize_put(st, bucket, &meta, &stored.staged).await?;
 
     // Clean up the upload: metadata row then part files.
-    let _ = st.meta.delete_row(MULTIPARTS, &upload_key(bucket, &upload_id));
+    let _ = st
+        .meta
+        .delete_row(MULTIPARTS, &upload_key(bucket, &upload_id));
     let _ = tokio::fs::remove_dir_all(st.data.multipart_dir(&upload_id)).await;
 
     let inner = format!(
@@ -619,14 +652,20 @@ async fn abort_multipart(
     let b = load_bucket(st, bucket)?;
     st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
     let _ = load_upload(st, bucket, key, &upload_id)?;
-    let _ = st.meta.delete_row(MULTIPARTS, &upload_key(bucket, &upload_id));
+    let _ = st
+        .meta
+        .delete_row(MULTIPARTS, &upload_key(bucket, &upload_id));
     let dir = st.data.multipart_dir(&upload_id);
     // Best-effort removal, the row is already gone so the space is reclaimable.
     let _ = tokio::fs::remove_dir_all(dir).await;
     Ok(Response::new(Body::empty()))
 }
 
-fn list_multipart_uploads(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, S3Error> {
+fn list_multipart_uploads(
+    st: &AppState,
+    s3: &S3Request,
+    bucket: &str,
+) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
     st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
     let uploads: Vec<MultipartUpload> = st
@@ -669,10 +708,4 @@ pub use crate::data::validate_object_key as _validate_object_key;
 
 /// Type alias kept for documentation of ownership in handlers.
 pub type ArcState = Arc<AppState>;
-
-
-
-
-
-
 

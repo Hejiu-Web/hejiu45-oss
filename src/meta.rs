@@ -33,7 +33,15 @@ pub const AUDIT: TableDefinition<&str, &str> = TableDefinition::new("audit");
 /// `upload id` → [`MultipartUpload`]
 pub const MULTIPARTS: TableDefinition<&str, &str> = TableDefinition::new("multipart_uploads");
 
-const ALL_TABLES: [&str; 7] = ["buckets", "objects", "access_keys", "admin_users", "sessions", "audit", "multipart_uploads"];
+const ALL_TABLES: [&str; 7] = [
+    "buckets",
+    "objects",
+    "access_keys",
+    "admin_users",
+    "sessions",
+    "audit",
+    "multipart_uploads",
+];
 
 /// Rights a single access key holds on a bucket.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,10 +51,22 @@ pub struct BucketPerms {
 }
 
 impl BucketPerms {
-    pub const NONE: Self = Self { read: false, write: false };
-    pub const READ: Self = Self { read: true, write: false };
-    pub const WRITE: Self = Self { read: false, write: true };
-    pub const FULL: Self = Self { read: true, write: true };
+    pub const NONE: Self = Self {
+        read: false,
+        write: false,
+    };
+    pub const READ: Self = Self {
+        read: true,
+        write: false,
+    };
+    pub const WRITE: Self = Self {
+        read: false,
+        write: true,
+    };
+    pub const FULL: Self = Self {
+        read: true,
+        write: true,
+    };
     pub fn can_read(&self) -> bool {
         self.read
     }
@@ -314,7 +334,8 @@ impl Meta {
     /// Begin a write transaction.
     fn write(&self) -> anyhow::Result<redb::WriteTransaction> {
         Ok(self.db()?.as_ref().expect("checked").begin_write()?)
-    }    /// Generic read of one JSON row.
+    }
+    /// Generic read of one JSON row.
     pub fn get_json<T: for<'de> Deserialize<'de>>(
         &self,
         table: TableDefinition<&str, &str>,
@@ -324,9 +345,8 @@ impl Meta {
         let t = tx.open_table(table)?;
         match t.get(key)? {
             Some(v) => {
-                let parsed = serde_json::from_str(v.value()).with_context(|| {
-                    format!("decoding metadata row {key:?}")
-                })?;
+                let parsed = serde_json::from_str(v.value())
+                    .with_context(|| format!("decoding metadata row {key:?}"))?;
                 Ok(Some(parsed))
             }
             None => Ok(None),
@@ -440,7 +460,7 @@ impl Meta {
         // Key = zero-padded seconds + monotonic sequence, so lexicographic
         // order equals write order even for entries in the same second.
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-        let key = format!("{at:013}-{seq:010}", );
+        let key = format!("{at:013}-{seq:010}",);
         let entry = AuditEntry {
             at,
             actor: actor.to_string(),
@@ -479,7 +499,9 @@ impl Meta {
         }
         for name in ALL_TABLES {
             if !present.iter().any(|n| n == name) {
-                bail!("metadata database is missing table {name}; was it created by a newer version?");
+                bail!(
+                    "metadata database is missing table {name}; was it created by a newer version?"
+                );
             }
         }
         Ok(())
@@ -535,7 +557,8 @@ mod tests {
     fn roundtrip_bucket_and_schema() {
         let (_t, m) = temp_meta();
         m.check_schema().unwrap();
-        m.put_json(BUCKETS, "photos", &sample_bucket("photos")).unwrap();
+        m.put_json(BUCKETS, "photos", &sample_bucket("photos"))
+            .unwrap();
         let got: BucketMeta = m.get_json(BUCKETS, "photos").unwrap().unwrap();
         assert_eq!(got.name, "photos");
         assert!(!got.is_public_read());
@@ -548,12 +571,24 @@ mod tests {
     fn delete_prefix_only_touches_matching_rows() {
         let (_t, m) = temp_meta();
         for k in ["a\u{0}x", "a\u{0}y", "ab\u{0}z"] {
-            m.put_json(OBJECTS, k, &ObjectMeta { key: k.into(), ..Default::default() })
-                .unwrap();
+            m.put_json(
+                OBJECTS,
+                k,
+                &ObjectMeta {
+                    key: k.into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         }
         let removed = m.delete_prefix(OBJECTS, "a\u{0}").unwrap();
         assert_eq!(removed, 2);
-        let left: Vec<ObjectMeta> = m.scan_json(OBJECTS, None, 10).unwrap().into_iter().map(|x| x.1).collect();
+        let left: Vec<ObjectMeta> = m
+            .scan_json(OBJECTS, None, 10)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.1)
+            .collect();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].key, "ab\u{0}z");
     }
@@ -577,7 +612,12 @@ mod tests {
         m.backup_to(&dest).unwrap();
         assert!(dest.exists());
         let reopened = Meta::open(&dest).unwrap();
-        assert!(reopened.get_json::<BucketMeta>(BUCKETS, "b1").unwrap().is_some());
+        assert!(
+            reopened
+                .get_json::<BucketMeta>(BUCKETS, "b1")
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -587,7 +627,3 @@ mod tests {
         assert_eq!((b, o), ("bucket", "dir/file name.txt"));
     }
 }
-
-
-
-

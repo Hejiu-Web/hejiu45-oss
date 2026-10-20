@@ -1,4 +1,4 @@
-//! Serving of the embedded console (Vue 3 SPA built by Vite).
+﻿//! Serving of the embedded console (Vue 3 SPA built by Vite).
 //!
 //! `rust-embed` writes `frontend/dist/` into the binary at compile time, so a
 //! running server needs no static files and no `Node.js`.
@@ -62,12 +62,13 @@ fn serve(path: &str, data: std::borrow::Cow<'static, [u8]>, cache: &'static str)
         .first_or_octet_stream()
         .essence_str()
         .to_string();
-    let etag = format!("\"{}\"", crate::crypto::sha256_hex(&data)[..32].to_string());
+    let etag = format!("\"{}\"", &crate::crypto::sha256_hex(&data)[..32]);
     let mut res = Response::new(Body::from(data.into_owned()));
     let headers = res.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&mime).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+        HeaderValue::from_str(&mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
     if let Ok(v) = HeaderValue::from_str(&etag) {
@@ -84,10 +85,7 @@ mod tests {
     async fn root_serves_index_html() {
         let r = static_handler("/".parse().unwrap()).await;
         assert_eq!(r.status(), StatusCode::OK);
-        assert_eq!(
-            r.headers().get(header::CONTENT_TYPE).unwrap(),
-            "text/html"
-        );
+        assert_eq!(r.headers().get(header::CONTENT_TYPE).unwrap(), "text/html");
     }
 
     #[tokio::test]
@@ -103,3 +101,4 @@ mod tests {
         assert!(cache_control("favicon.ico").contains("must-revalidate"));
     }
 }
+

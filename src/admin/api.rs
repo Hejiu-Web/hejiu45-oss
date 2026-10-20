@@ -1,4 +1,4 @@
-﻿//! Management API for the embedded console (`/api/*`).
+//! Management API for the embedded console (`/api/*`).
 //!
 //! ## Security model
 //!
@@ -11,7 +11,6 @@
 //! bytes directly (it has no access key), and an S3 key cannot log in here.
 //! That split keeps the blast radius of either compromise small.
 
-
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -20,12 +19,12 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::admin::session;
 use crate::crypto::{hash_admin_password, verify_admin_password};
 use crate::error::ApiError;
 use crate::meta::{
     ACCESS_KEYS, ADMIN_USERS, BUCKETS, BucketMeta, BucketPerms, OBJECTS, ObjectMeta,
 };
-use crate::admin::session;
 use crate::state::{AppState, now_rfc3339};
 
 const MAX_LOGIN_FAILURES: u32 = 8;
@@ -45,7 +44,8 @@ fn check_throttle(ip: &str) -> Result<(), ApiError> {
     let mut g = THROTTLE.lock();
     let t = g.get_or_insert_with(LoginThrottle::default);
     // Purge stale windows.
-    t.failures.retain(|_, (_, at)| now - *at < LOGIN_WINDOW_SECS);
+    t.failures
+        .retain(|_, (_, at)| now - *at < LOGIN_WINDOW_SECS);
     match t.failures.get(ip) {
         Some((n, _)) if *n >= MAX_LOGIN_FAILURES => Err(ApiError::too_many_requests(
             "Too many failed logins from this address; try again in a few minutes.",
@@ -129,7 +129,13 @@ pub async fn login(
         .get_json::<crate::meta::AdminUser>(ADMIN_USERS, &body.username)
         .map_err(ApiError::internal)?
         // Same error for "no such user" and "wrong password": no user enumeration.
-        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "InvalidCredentials", "Invalid username or password."))?;
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "InvalidCredentials",
+                "Invalid username or password.",
+            )
+        })?;
 
     // Argon2id is deliberately slow; keep it off the async worker.
     let phc = user.password_phc.clone();
@@ -139,7 +145,13 @@ pub async fn login(
         .map_err(ApiError::internal)?;
     if !ok {
         record_failure(&ip);
-        st.meta.audit(&body.username, "admin.login_failed", &body.username, "", &ip);
+        st.meta.audit(
+            &body.username,
+            "admin.login_failed",
+            &body.username,
+            "",
+            &ip,
+        );
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "InvalidCredentials",
@@ -148,11 +160,20 @@ pub async fn login(
     }
     clear_failures(&ip);
 
-    let cookie = session::create(&st.meta, &user, st.args.session_ttl(), st.args.secure_cookies())
-        .map_err(ApiError::internal)?;
+    let cookie = session::create(
+        &st.meta,
+        &user,
+        st.args.session_ttl(),
+        st.args.secure_cookies(),
+    )
+    .map_err(ApiError::internal)?;
     session::sweep(&st.meta);
-    st.meta.audit(&user.username, "admin.login", &user.username, "", &ip);
-    Ok((jar.add(cookie), Json(json!({ "ok": true, "username": user.username }))))
+    st.meta
+        .audit(&user.username, "admin.login", &user.username, "", &ip);
+    Ok((
+        jar.add(cookie),
+        Json(json!({ "ok": true, "username": user.username })),
+    ))
 }
 
 /// `POST /api/auth/logout`
@@ -222,7 +243,10 @@ pub async fn change_password(
         "all sessions revoked",
         &session::client_ip(&headers),
     );
-    Ok((session::clear(jar), Json(json!({ "ok": true, "reauthenticate": true }))))
+    Ok((
+        session::clear(jar),
+        Json(json!({ "ok": true, "reauthenticate": true })),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -248,8 +272,10 @@ pub struct GrantView {
 }
 
 fn bucket_view(st: &AppState, b: &BucketMeta) -> BucketView {
-    let keys: Vec<(String, crate::meta::AccessKeyRecord)> =
-        st.meta.scan_json(ACCESS_KEYS, None, 10_000).unwrap_or_default();
+    let keys: Vec<(String, crate::meta::AccessKeyRecord)> = st
+        .meta
+        .scan_json(ACCESS_KEYS, None, 10_000)
+        .unwrap_or_default();
     let mut grants = Vec::new();
     for (id, rec) in keys {
         if let Some(p) = b.perms.get(&id) {
@@ -311,7 +337,9 @@ pub async fn create_bucket(
         .map_err(ApiError::internal)?
         .is_some()
     {
-        return Err(ApiError::conflict("A bucket with that name already exists."));
+        return Err(ApiError::conflict(
+            "A bucket with that name already exists.",
+        ));
     }
     let visibility = match body.visibility.as_deref() {
         Some("public-read") => "public-read",
@@ -329,7 +357,13 @@ pub async fn create_bucket(
     st.meta
         .put_json(BUCKETS, &b.name, &b)
         .map_err(ApiError::internal)?;
-    st.meta.audit(&auth.user.username, "bucket.create", &b.name, visibility, "");
+    st.meta.audit(
+        &auth.user.username,
+        "bucket.create",
+        &b.name,
+        visibility,
+        "",
+    );
     Ok((StatusCode::CREATED, Json(bucket_view(&st, &b))))
 }
 
@@ -353,14 +387,22 @@ pub async fn update_bucket(
         .ok_or_else(|| ApiError::not_found("Bucket not found."))?;
     if let Some(v) = body.visibility {
         if v != "private" && v != "public-read" {
-            return Err(ApiError::bad_request("visibility must be 'private' or 'public-read'."));
+            return Err(ApiError::bad_request(
+                "visibility must be 'private' or 'public-read'.",
+            ));
         }
         b.visibility = v;
     }
     st.meta
         .put_json(BUCKETS, &name, &b)
         .map_err(ApiError::internal)?;
-    st.meta.audit(&auth.user.username, "bucket.update", &name, &b.visibility, "");
+    st.meta.audit(
+        &auth.user.username,
+        "bucket.update",
+        &name,
+        &b.visibility,
+        "",
+    );
     Ok(Json(bucket_view(&st, &b)))
 }
 
@@ -385,9 +427,20 @@ pub async fn delete_bucket(
             "The bucket still contains objects; empty it first.",
         ));
     }
-    st.meta.delete_row(BUCKETS, &name).map_err(ApiError::internal)?;
-    st.data.remove_bucket_dir(&name).await.map_err(ApiError::internal)?;
-    st.meta.audit(&auth.user.username, "bucket.delete", &name, &b.visibility, "");
+    st.meta
+        .delete_row(BUCKETS, &name)
+        .map_err(ApiError::internal)?;
+    st.data
+        .remove_bucket_dir(&name)
+        .await
+        .map_err(ApiError::internal)?;
+    st.meta.audit(
+        &auth.user.username,
+        "bucket.delete",
+        &name,
+        &b.visibility,
+        "",
+    );
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -483,7 +536,8 @@ pub async fn create_key(
         return Err(ApiError::bad_request("A label is required."));
     }
     if let Some(exp) = &body.expires_at {
-        if time::OffsetDateTime::parse(exp, &time::format_description::well_known::Rfc3339).is_err() {
+        if time::OffsetDateTime::parse(exp, &time::format_description::well_known::Rfc3339).is_err()
+        {
             return Err(ApiError::bad_request("expires_at must be RFC 3339."));
         }
     }
@@ -491,7 +545,13 @@ pub async fn create_key(
         .auth
         .create_access_key(label, &auth.user.username, body.expires_at.clone())
         .map_err(ApiError::internal)?;
-    st.meta.audit(&auth.user.username, "key.create", &rec.access_key_id, label, "");
+    st.meta.audit(
+        &auth.user.username,
+        "key.create",
+        &rec.access_key_id,
+        label,
+        "",
+    );
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -511,7 +571,13 @@ pub async fn rotate_key(
 ) -> Result<impl IntoResponse, ApiError> {
     let auth = session::require(&st.meta, &jar)?;
     let (rec, secret) = st.auth.rotate_access_key(&id).map_err(ApiError::internal)?;
-    st.meta.audit(&auth.user.username, "key.rotate", &rec.access_key_id, &id, "");
+    st.meta.audit(
+        &auth.user.username,
+        "key.rotate",
+        &rec.access_key_id,
+        &id,
+        "",
+    );
     Ok(Json(json!({
         "access_key_id": rec.access_key_id,
         "secret_access_key": secret,
@@ -543,7 +609,11 @@ pub async fn toggle_key(
         .map_err(ApiError::internal)?;
     st.meta.audit(
         &auth.user.username,
-        if body.enabled { "key.enable" } else { "key.disable" },
+        if body.enabled {
+            "key.enable"
+        } else {
+            "key.disable"
+        },
         &id,
         "",
         "",
@@ -568,11 +638,16 @@ pub async fn delete_key(
     }
     for mut b in all_buckets(&st) {
         if b.perms.remove(&id).is_some() {
-            st.meta.put_json(BUCKETS, &b.name, &b).map_err(ApiError::internal)?;
+            st.meta
+                .put_json(BUCKETS, &b.name, &b)
+                .map_err(ApiError::internal)?;
         }
     }
-    st.meta.delete_row(ACCESS_KEYS, &id).map_err(ApiError::internal)?;
-    st.meta.audit(&auth.user.username, "key.delete", &id, "", "");
+    st.meta
+        .delete_row(ACCESS_KEYS, &id)
+        .map_err(ApiError::internal)?;
+    st.meta
+        .audit(&auth.user.username, "key.delete", &id, "", "");
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -633,8 +708,13 @@ pub async fn set_grants(
                 .map_err(ApiError::internal)?;
         }
     }
-    st.meta
-        .audit(&auth.user.username, "key.grants", &id, &format!("{} buckets", wanted.len()), "");
+    st.meta.audit(
+        &auth.user.username,
+        "key.grants",
+        &id,
+        &format!("{} buckets", wanted.len()),
+        "",
+    );
     let rec = st
         .meta
         .get_json::<crate::meta::AccessKeyRecord>(ACCESS_KEYS, &id)
@@ -766,11 +846,7 @@ pub async fn presign_object(
         .public_url
         .clone()
         .unwrap_or_else(|| format!("http://{}", st.args.listen));
-    let host = public
-        .split("://")
-        .nth(1)
-        .unwrap_or(&public)
-        .to_string();
+    let host = public.split("://").nth(1).unwrap_or(&public).to_string();
     let encoded_key = key
         .split('/')
         .map(|seg| {
@@ -841,7 +917,12 @@ pub async fn overview(
     let total_bytes: u64 = objects.iter().map(|o| o.size).sum();
     let mut by_type: std::collections::BTreeMap<String, usize> = Default::default();
     for o in &objects {
-        let top = o.content_type.split('/').next().unwrap_or("other").to_string();
+        let top = o
+            .content_type
+            .split('/')
+            .next()
+            .unwrap_or("other")
+            .to_string();
         *by_type.entry(top).or_default() += 1;
     }
     Ok(Json(json!({
@@ -856,8 +937,3 @@ pub async fn overview(
         "region": st.args.region,
     })))
 }
-
-
-
-
-

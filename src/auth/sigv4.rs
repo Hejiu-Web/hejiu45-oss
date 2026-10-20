@@ -1,4 +1,4 @@
-//! AWS Signature Version 4 *verification* (server side).
+﻿//! AWS Signature Version 4 *verification* (server side).
 //!
 //! Why this is hand-written while request *signing* uses `rusty-s3`:
 //! `rusty-s3` computes signatures for outgoing requests. Verification needs the
@@ -105,9 +105,9 @@ pub fn declared_payload_hash(req: &SigV4Request) -> &str {
 /// read here rather than in [`parse`] so that a parsed [`SigV4Request`] is
 /// always complete enough to compute a signature from.
 fn parse_authorization(value: &str, headers: &HeaderMap) -> Result<SigV4Request, S3Error> {
-    let rest = value
-        .strip_prefix("AWS4-HMAC-SHA256 ")
-        .ok_or_else(|| S3Error::invalid_request("Unsupported authorization algorithm; expected AWS4-HMAC-SHA256."))?;
+    let rest = value.strip_prefix("AWS4-HMAC-SHA256 ").ok_or_else(|| {
+        S3Error::invalid_request("Unsupported authorization algorithm; expected AWS4-HMAC-SHA256.")
+    })?;
     let mut credential = None;
     let mut signed_headers = None;
     let mut signature = None;
@@ -121,7 +121,8 @@ fn parse_authorization(value: &str, headers: &HeaderMap) -> Result<SigV4Request,
             signature = Some(v.to_string());
         }
     }
-    let credential_str = credential.ok_or_else(|| S3Error::invalid_request("Missing Credential in Authorization."))?;
+    let credential_str = credential
+        .ok_or_else(|| S3Error::invalid_request("Missing Credential in Authorization."))?;
     let mut scope = credential_str.split('/');
     let access_key = scope.next().unwrap_or_default().to_string();
     let date = scope.next().unwrap_or_default().to_string();
@@ -140,7 +141,9 @@ fn parse_authorization(value: &str, headers: &HeaderMap) -> Result<SigV4Request,
     }
     let signature = signature.ok_or_else(|| S3Error::invalid_request("Missing Signature."))?;
     if signature.len() != 64 || !signature.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(S3Error::invalid_request("Signature must be 64 hex characters."));
+        return Err(S3Error::invalid_request(
+            "Signature must be 64 hex characters.",
+        ));
     }
     Ok(SigV4Request {
         style: AuthStyle::Header,
@@ -219,7 +222,9 @@ fn parse_presigned(q: &AuthQuery, headers: &HeaderMap) -> Result<SigV4Request, S
     let service = scope.next().unwrap_or_default().to_string();
     let terminal = scope.next().unwrap_or_default().to_string();
     if access_key.is_empty() || date.len() != 8 || terminal != "aws4_request" || service != "s3" {
-        return Err(S3Error::invalid_request("Malformed X-Amz-Credential scope."));
+        return Err(S3Error::invalid_request(
+            "Malformed X-Amz-Credential scope.",
+        ));
     }
     let expires: u64 = q
         .expires
@@ -238,7 +243,9 @@ fn parse_presigned(q: &AuthQuery, headers: &HeaderMap) -> Result<SigV4Request, S
         .ok_or_else(|| S3Error::invalid_request("Missing X-Amz-Signature."))?
         .to_ascii_lowercase();
     if signature.len() != 64 || !signature.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(S3Error::invalid_request("X-Amz-Signature must be 64 hex characters."));
+        return Err(S3Error::invalid_request(
+            "X-Amz-Signature must be 64 hex characters.",
+        ));
     }
     Ok(SigV4Request {
         style: AuthStyle::Presigned,
@@ -247,7 +254,10 @@ fn parse_presigned(q: &AuthQuery, headers: &HeaderMap) -> Result<SigV4Request, S
         region,
         service,
         terminal,
-        signed_headers_raw: q.signed_headers.clone().unwrap_or_else(|| "host".to_string()),
+        signed_headers_raw: q
+            .signed_headers
+            .clone()
+            .unwrap_or_else(|| "host".to_string()),
         signature,
         amz_date: q.date.clone().unwrap_or_default(),
         expires_secs: Some(expires),
@@ -263,10 +273,7 @@ fn parse_presigned(q: &AuthQuery, headers: &HeaderMap) -> Result<SigV4Request, S
 /// A request carrying both an `Authorization` header and presigned query
 /// parameters is rejected: two conflicting proofs of identity are a classic
 /// request-smuggling/confusion vector.
-pub fn parse(
-    headers: &HeaderMap,
-    query: &AuthQuery,
-) -> Result<Option<SigV4Request>, S3Error> {
+pub fn parse(headers: &HeaderMap, query: &AuthQuery) -> Result<Option<SigV4Request>, S3Error> {
     let auth = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -284,9 +291,28 @@ pub fn parse(
 fn uri_encode(s: &str, encode_slash: bool) -> String {
     use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
     const QSAFE: &AsciiSet = &CONTROLS
-        .add(b' ').add(b'"').add(b'#').add(b'%').add(b'&').add(b'+').add(b',')
-        .add(b':').add(b';').add(b'<').add(b'=').add(b'>').add(b'?').add(b'@')
-        .add(b'[').add(b'\\').add(b']').add(b'^').add(b'`').add(b'{').add(b'|').add(b'}');
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'&')
+        .add(b'+')
+        .add(b',')
+        .add(b':')
+        .add(b';')
+        .add(b'<')
+        .add(b'=')
+        .add(b'>')
+        .add(b'?')
+        .add(b'@')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}');
     const QSAFE_NO_SLASH: &AsciiSet = &QSAFE.add(b'/');
     let set = if encode_slash { QSAFE_NO_SLASH } else { QSAFE };
     utf8_percent_encode(s, set).to_string()
@@ -397,7 +423,9 @@ pub fn canonical_request(
             continue;
         }
         if name.chars().any(|c| c.is_uppercase()) {
-            return Err(S3Error::invalid_request("SignedHeaders must be lowercase, without spaces."));
+            return Err(S3Error::invalid_request(
+                "SignedHeaders must be lowercase, without spaces.",
+            ));
         }
         let values = if name == "host" {
             // `host` is mandatory and always present on HTTP/1.1.
@@ -476,7 +504,10 @@ pub fn compute_signature(
     payload_hash: &str,
 ) -> Result<String, S3Error> {
     let key = signing_key(secret, &req.date, &req.region, &req.service);
-    let scope = format!("{}/{}/{}/{}", req.date, req.region, req.service, req.terminal);
+    let scope = format!(
+        "{}/{}/{}/{}",
+        req.date, req.region, req.service, req.terminal
+    );
     let mut first: Option<String> = None;
     for candidate in path_candidates(raw_path) {
         let creq = canonical_request(
@@ -595,10 +626,29 @@ pub fn raw_path_from_target(target: &str) -> &str {
 pub fn uri_encode_path(s: &str) -> String {
     use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
     const PATH: &AsciiSet = &CONTROLS
-        .add(b' ').add(b'"').add(b'#').add(b'%').add(b'&').add(b'+').add(b',')
-        .add(b':').add(b';').add(b'<').add(b'=').add(b'>').add(b'?').add(b'@')
-        .add(b'[').add(b'\\').add(b']').add(b'^').add(b'`').add(b'{').add(b'|')
-        .add(b'}').add(b'$');
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'&')
+        .add(b'+')
+        .add(b',')
+        .add(b':')
+        .add(b';')
+        .add(b'<')
+        .add(b'=')
+        .add(b'>')
+        .add(b'?')
+        .add(b'@')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}')
+        .add(b'$');
     utf8_percent_encode(s, PATH).to_string()
 }
 
@@ -680,13 +730,18 @@ mod tests {
         let auth = authorize("AKIAIOSFODNN7EXAMPLE", signed, expected);
         let req = parse_authorization(&auth, headers).expect("authorization parses");
         let sig = compute_signature(
-            &req, EXAMPLE_SECRET, &method, raw_path, raw_query, headers, payload_hash,
+            &req,
+            EXAMPLE_SECRET,
+            &method,
+            raw_path,
+            raw_query,
+            headers,
+            payload_hash,
         )
         .expect("signature computes");
         assert_eq!(sig, expected, "path={raw_path} query={raw_query}");
         assert!(signatures_equal(&sig, &req.signature));
     }
-
 
     /// "Example: GET Object"
     #[test]
@@ -716,7 +771,6 @@ mod tests {
     }
 
     /// "Example: PUT Object" — note the literal `$` in the key.
-    #[test]
     #[test]
     fn aws_s3_put_object_vector() {
         let headers = hm(&[
@@ -822,7 +876,10 @@ mod tests {
             ("prefix".to_string(), "J".to_string()),
             ("max-keys".to_string(), "2".to_string()),
         ];
-        assert_eq!(canonical_query(&pairs, AuthStyle::Header), "max-keys=2&prefix=J");
+        assert_eq!(
+            canonical_query(&pairs, AuthStyle::Header),
+            "max-keys=2&prefix=J"
+        );
         // Space must become %20, not '+'.
         let pairs = vec![("prefix".to_string(), "a b".to_string())];
         assert_eq!(canonical_query(&pairs, AuthStyle::Header), "prefix=a%20b");
@@ -874,15 +931,4 @@ mod tests {
         assert_eq!(percent_decode("bad%zz"), "bad%zz");
     }
 }
-
-
-
-
-
-
-
-
-
-
-
 

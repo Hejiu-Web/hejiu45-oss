@@ -61,7 +61,8 @@ impl XmlReader {
         if self.peek() != Some('<') {
             return Err("expected element".into());
         }
-        self.parse_element().map_err(|e| format!("XML parse error: {e}"))
+        self.parse_element()
+            .map_err(|e| format!("XML parse error: {e}"))
     }
 
     fn peek(&self) -> Option<char> {
@@ -306,7 +307,11 @@ mod tests {
 </Delete>"#;
         let node = XmlReader::new(doc).parse().unwrap();
         assert_eq!(node.name, "Delete");
-        let objs: Vec<&XmlNode> = node.children.iter().filter(|c| c.name == "Object").collect();
+        let objs: Vec<&XmlNode> = node
+            .children
+            .iter()
+            .filter(|c| c.name == "Object")
+            .collect();
         assert_eq!(objs.len(), 2);
         assert_eq!(XmlReader::child_text(objs[0], "Key"), Some("a.txt"));
         assert_eq!(XmlReader::child_text(objs[1], "Key"), Some("dir/b & c.txt"));
@@ -328,7 +333,10 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(parts, vec![("1".into(), "\"abc\"".into()), ("2".into(), "def".into())]);
+        assert_eq!(
+            parts,
+            vec![("1".into(), "\"abc\"".into()), ("2".into(), "def".into())]
+        );
     }
 
     #[test]
@@ -341,9 +349,12 @@ mod tests {
     #[test]
     fn handles_prefixes_cdata_and_self_closing() {
         let doc = r#"<s3:Delete><s3:Object><s3:Key><![CDATA[x<y]]></s3:Key></s3:Object><s3:Quiet/></s3:Delete>"#;
-        let node = XmlReader::new(doc).parse().unwrap_or_else(|e| panic!("{e} | src={doc}"));
+        let node = XmlReader::new(doc)
+            .parse()
+            .unwrap_or_else(|e| panic!("{e} | src={doc}"));
         assert_eq!(node.name, "Delete");
-        let obj = XmlReader::child(&node, "Object").unwrap_or_else(|| panic!("no Object child; children={:?}", node.children));
+        let obj = XmlReader::child(&node, "Object")
+            .unwrap_or_else(|| panic!("no Object child; children={:?}", node.children));
         assert_eq!(XmlReader::child_text(obj, "Key"), Some("x<y"));
         assert!(XmlReader::child(&node, "Quiet").is_some());
     }
@@ -355,5 +366,3 @@ mod tests {
         assert!(s.contains("<Name>b</Name>"));
     }
 }
-
-

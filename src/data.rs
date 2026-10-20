@@ -164,7 +164,9 @@ impl Data {
     }
 
     pub fn multipart_part_path(&self, upload_id: &str, part: u32) -> PathBuf {
-        self.multipart_dir.join(upload_id).join(format!("{part:05}"))
+        self.multipart_dir
+            .join(upload_id)
+            .join(format!("{part:05}"))
     }
 
     pub fn multipart_dir(&self, upload_id: &str) -> PathBuf {
@@ -496,7 +498,8 @@ mod tests {
     use tokio::io::AsyncReadExt;
 
     fn tmpdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!("hejiu45-data-{}", uuid::Uuid::new_v4().simple()));
+        let p =
+            std::env::temp_dir().join(format!("hejiu45-data-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&p).unwrap();
         p
     }
@@ -517,7 +520,11 @@ mod tests {
         // Chunked updates over 1 MiB of 'a' must match the same single-shot
         // implementation (they share the crate, but this pins our call site).
         let big = vec![b'a'; 1024 * 1024];
-        assert_eq!(md5_hex(&big), "7202826a7791073fe2787f0c94603278", "1 MiB of 'a'");
+        assert_eq!(
+            md5_hex(&big),
+            "7202826a7791073fe2787f0c94603278",
+            "1 MiB of 'a'"
+        );
     }
 
     #[test]
@@ -581,10 +588,7 @@ mod tests {
     async fn stage_enforces_size_limit_and_cleans_up() {
         let root = tmpdir();
         let d = Data::open(&root).unwrap();
-        let err = d
-            .stage(&vec![0u8; 4096][..], Some(1024))
-            .await
-            .unwrap_err();
+        let err = d.stage(&vec![0u8; 4096][..], Some(1024)).await.unwrap_err();
         assert_eq!(err.code, "EntityTooLarge");
         let mut rd = tokio::fs::read_dir(&root.join("tmp")).await.unwrap();
         assert!(rd.next_entry().await.unwrap().is_none(), "temp file leaked");
@@ -593,7 +597,10 @@ mod tests {
 
     #[test]
     fn content_type_sniffing() {
-        assert_eq!(sniff_content_type(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0]), "image/png");
+        assert_eq!(
+            sniff_content_type(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0]),
+            "image/png"
+        );
         assert_eq!(sniff_content_type(&[0xFF, 0xD8, 0xFF, 0xE0]), "image/jpeg");
         assert_eq!(sniff_content_type(b"GIF89a..."), "image/gif");
         assert_eq!(sniff_content_type(b"%PDF-1.7"), "application/pdf");
@@ -601,12 +608,21 @@ mod tests {
         assert_eq!(sniff_content_type(b"\x1f\x8b\x08"), "application/gzip");
         assert_eq!(sniff_content_type(b"RIFF\0\0\0\0WEBPVP8 "), "image/webp");
         assert_eq!(sniff_content_type(b"\0\0\0\x18ftypmp42"), "video/mp4");
-        assert_eq!(sniff_content_type(b"<?xml version=\"1.0\"?><svg xmlns=\"...\">"), "image/svg+xml");
+        assert_eq!(
+            sniff_content_type(b"<?xml version=\"1.0\"?><svg xmlns=\"...\">"),
+            "image/svg+xml"
+        );
         // Text is deliberately not sniffed: an uploaded .html must stay
         // generic so it can never be served as a script-bearing document by
         // content sniffing.
-        assert_eq!(sniff_content_type(b"<html><body>hi</body></html>"), "application/octet-stream");
-        assert_eq!(sniff_content_type(b"hello world"), "application/octet-stream");
+        assert_eq!(
+            sniff_content_type(b"<html><body>hi</body></html>"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            sniff_content_type(b"hello world"),
+            "application/octet-stream"
+        );
         assert_eq!(sniff_content_type(b""), "application/octet-stream");
     }
 
@@ -615,7 +631,15 @@ mod tests {
         for good in ["abc", "my-bucket", "a.b.c", "logs-2026"] {
             assert!(validate_bucket_name(good).is_ok(), "{good}");
         }
-        for bad in ["ab", "MyBucket", "-lead", "trail-", "a..b", "192.168.1.1", "a_b"] {
+        for bad in [
+            "ab",
+            "MyBucket",
+            "-lead",
+            "trail-",
+            "a..b",
+            "192.168.1.1",
+            "a_b",
+        ] {
             assert!(validate_bucket_name(bad).is_err(), "{bad}");
         }
     }
@@ -628,11 +652,3 @@ mod tests {
         assert!(validate_object_key(&"k".repeat(1025)).is_err());
     }
 }
-
-
-
-
-
-
-
-

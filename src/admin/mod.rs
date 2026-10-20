@@ -27,13 +27,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/auth/password", post(api::change_password))
         .route("/api/overview", get(api::overview))
         .route("/api/audit", get(api::audit_log))
-        .route("/api/buckets", get(api::list_buckets).post(api::create_bucket))
+        .route(
+            "/api/buckets",
+            get(api::list_buckets).post(api::create_bucket),
+        )
         .route(
             "/api/buckets/{name}",
             patch(api::update_bucket).delete(api::delete_bucket),
         )
         .route("/api/buckets/{name}/objects", get(api::list_objects))
-        .route("/api/buckets/{name}/objects/presign", post(api::presign_object))
+        .route(
+            "/api/buckets/{name}/objects/presign",
+            post(api::presign_object),
+        )
         .route("/api/keys", get(api::list_keys).post(api::create_key))
         .route(
             "/api/keys/{id}",

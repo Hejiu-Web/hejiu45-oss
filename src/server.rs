@@ -1,4 +1,4 @@
-﻿//! Router assembly, TLS termination, and graceful shutdown.
+//! Router assembly, TLS termination, and graceful shutdown.
 //!
 //! ## Route ordering (the trap called out in the design notes)
 //!
@@ -8,6 +8,7 @@
 //! S3 bucket routes use `/{bucket}` and `/{bucket}/{*key}` — single-segment
 //! and two-plus-segment — which keeps `/api` out of the S3 namespace entirely.
 
+use anyhow::Context;
 use axum::Router;
 use axum::middleware;
 use axum::routing::{any, get};
@@ -55,9 +56,14 @@ pub fn build_router(state: AppState) -> Router {
 
 /// Final fallback: S3-prefixed paths get an S3 response, everything else the
 /// SPA shell.
-async fn s3_or_spa(state: axum::extract::State<AppState>, req: axum::extract::Request) -> axum::response::Response {
+async fn s3_or_spa(
+    state: axum::extract::State<AppState>,
+    req: axum::extract::Request,
+) -> axum::response::Response {
     let prefix = &state.args.s3_prefix;
-    if !prefix.is_empty() && (req.uri().path() == prefix || req.uri().path().starts_with(&format!("{prefix}/"))) {
+    if !prefix.is_empty()
+        && (req.uri().path() == prefix || req.uri().path().starts_with(&format!("{prefix}/")))
+    {
         return crate::s3::root(state, req).await;
     }
     crate::web::static_handler(req.uri().clone()).await
@@ -89,9 +95,12 @@ pub async fn serve(state: AppState) -> anyhow::Result<()> {
         _ => {
             info!(%addr, "serving HTTP");
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, router.into_make_service_with_connect_info::<std::net::SocketAddr>())
-                .with_graceful_shutdown(shutdown_signal())
-                .await?;
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
             Ok(())
         }
     }
@@ -113,16 +122,40 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = term => {},
+
     }
     info!("shutdown signal received; draining connections");
 }
 
-#[allow(unused_variables)]
-async fn serve_tls(router: Router, addr: std::net::SocketAddr, cert: &std::path::Path, key: &std::path::Path) -> anyhow::Result<()> {
-    anyhow::bail!("TLS support is built in a later step of this build")
+/// Serve HTTPS with a PEM certificate chain and private key.
+///
+/// This is the "no reverse proxy" deployment: point `--tls-cert`/`--tls-key`
+/// at a certificate from Let's Encrypt (certbot), an internal CA, or a
+/// corporate PKI. `axum-server` reloads the certificate from disk periodically,
+/// so a renewal takes effect without a restart.
+async fn serve_tls(
+    router: Router,
+    addr: std::net::SocketAddr,
+    cert: &std::path::Path,
+    key: &std::path::Path,
+) -> anyhow::Result<()> {
+    use axum_server::tls_rustls::RustlsConfig;
+
+    let config = RustlsConfig::from_pem_file(cert, key)
+        .await
+        .with_context(|| format!("loading TLS certificate from {}", cert.display()))?;
+    info!(cert = %cert.display(), "TLS configured (reloaded from disk every 60s)");
+
+    let handle = axum_server::Handle::new();
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+    });
+
+    axum_server::bind_rustls(addr, config)
+        .handle(handle)
+        .serve(router.into_make_service_with_connect_info::<std::net::SocketAddr>())
+        .await?;
+    Ok(())
 }
-
-
-
-
-

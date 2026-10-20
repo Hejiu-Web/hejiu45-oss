@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    name: format + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the console (needed for rust-embed)
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  test:
+    name: tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the console
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Unit tests
+        run: cargo test --locked --lib --all-features
+      - name: Build the binary
+        run: cargo build --locked
+
+  # End-to-end: run the server and exercise the S3 API with real SigV4
+  # signatures, including the security-critical negative cases.
+  e2e:
+    name: S3 end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        run: |
+          cd frontend && npm ci --no-audit --no-fund && npm run build && cd ..
+          cargo build --release --locked
+      - name: Run the server
+        run: |
+          ./target/release/hejiu45-oss \
+            --data-dir "$RUNNER_TEMP/data" \
+            --listen 127.0.0.1:9000 \
+            --allow-insecure \
+            --admin-password "ci-password-123456" \
+            --init-access-key ci-e2e > "$RUNNER_TEMP/server.log" 2>&1 &
+          sleep 3
+          curl -fsS http://127.0.0.1:9000/healthz
+      - name: Extract credentials
+        run: |
+          AK=$(grep 'access_key_id:' "$RUNNER_TEMP/server.log" | awk '{print $2}')
+          SK=$(grep 'secret_access_key:' "$RUNNER_TEMP/server.log" | awk '{print $2}')
+          echo "HEJIU45_OSS_AK=$AK" >> "$GITHUB_ENV"
+          echo "HEJIU45_OSS_SK=$SK" >> "$GITHUB_ENV"
+      - name: Provision the access key
+        run: |
+          # `--init-access-key` exits after provisioning; restart in serving mode.
+          kill %1 2>/dev/null || true
+          sleep 1
+          ./target/release/hejiu45-oss \
+            --data-dir "$RUNNER_TEMP/data" \
+            --listen 127.0.0.1:9000 \
+            --allow-insecure > "$RUNNER_TEMP/serve.log" 2>&1 &
+          sleep 3
+      - name: Run e2e (PowerShell)
+        shell: pwsh
+        run: ./scripts/e2e-s3.ps1 -Base http://127.0.0.1:9000 -AccessKey $env:HEJIU45_OSS_AK -SecretKey $env:HEJIU45_OSS_SK

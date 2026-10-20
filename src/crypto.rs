@@ -78,7 +78,11 @@ pub fn b64url_encode(b: impl AsRef<[u8]>) -> String {
 
 /// Decode URL-safe base64 (with or without padding) and standard base64.
 pub fn b64_decode(s: &str) -> anyhow::Result<Vec<u8>> {
-    let s = s.trim().trim_end_matches('=').replace('+', "-").replace('/', "_");
+    let s = s
+        .trim()
+        .trim_end_matches('=')
+        .replace('+', "-")
+        .replace('/', "_");
     let mut out = Vec::with_capacity(s.len() * 3 / 4);
     let mut acc: u32 = 0;
     let mut bits = 0u32;
@@ -310,7 +314,8 @@ mod tests {
         // assert on the decoded bytes instead of the ASCII-looking source.
         let raw = b64_decode(sealed.strip_prefix("v1:").unwrap()).unwrap();
         assert!(
-            !raw.windows(b"super-secret-ak".len()).any(|w| w == b"super-secret-ak"),
+            !raw.windows(b"super-secret-ak".len())
+                .any(|w| w == b"super-secret-ak"),
             "plaintext leaked into the sealed blob"
         );
     }
@@ -361,4 +366,3 @@ mod tests {
         assert!(sk.len() >= 40, "{sk}");
     }
 }
-

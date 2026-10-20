@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  # Linux artifacts come from native builders. The musl target is what makes
+  # the binary "run anywhere": no glibc version coupling at all.
+  linux:
+    name: linux (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the console
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Build static binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          NAME=hejiu45-oss-linux-${{ matrix.arch }}
+          cp target/${{ matrix.target }}/release/hejiu45-oss "$NAME"
+          strip "$NAME" || true
+          echo "== static linking =="
+          file "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            hejiu45-oss-linux-${{ matrix.arch }}
+            hejiu45-oss-linux-${{ matrix.arch }}.sha256
+
+  windows:
+    name: windows (amd64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the console
+        shell: pwsh
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Build
+        shell: pwsh
+        run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "hejiu45-oss-windows-amd64.exe"
+          Copy-Item "target/release/hejiu45-oss.exe" $name
+          $size = (Get-Item $name).Length / 1MB
+          Write-Host ("binary size: {0:N2} MB" -f $size)
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content "$name.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64
+          path: |
+            hejiu45-oss-windows-amd64.exe
+            hejiu45-oss-windows-amd64.exe.sha256
+
+  release:
+    name: publish
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Collect checksums
+        run: |
+          cd artifacts
+          ls -lh
+          # One aggregate checksum file that installers download.
+          : > checksums-hejiu45-oss.txt
+          for f in hejiu45-oss-*; do
+            case "$f" in *.sha256) continue ;; esac
+            sha256sum "$f" >> checksums-hejiu45-oss.txt
+            rm -f "$f.sha256"
+          done
+          cat checksums-hejiu45-oss.txt
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/hejiu45-oss-linux-amd64
+            artifacts/hejiu45-oss-linux-arm64
+            artifacts/hejiu45-oss-windows-amd64.exe
+            artifacts/checksums-hejiu45-oss.txt
+            install-linux.sh
+            install-windows.ps1
+          body: |
+            ## Install
+
+            **Linux** (one command, installs a hardened systemd unit):
+
+                curl -fsSL https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-linux.sh | sudo bash
+
+            **Windows** (elevated PowerShell; installs a WinSW-backed service):
+
+                irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows.ps1 | iex
+
+            **Manual**: download the binary for your platform, then run
+
+                hejiu45-oss --data-dir ./data --listen 0.0.0.0:9000 --tls reverse-proxy
+
+            A single ~6 MB binary contains the server, the S3 API and the web
+            console. `--help` lists every option.
+
+            Verify the download with `checksums-hejiu45-oss.txt`.

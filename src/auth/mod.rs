@@ -1,4 +1,4 @@
-//! Authentication and authorisation for the S3 data plane.
+﻿//! Authentication and authorisation for the S3 data plane.
 //!
 //! Layers, from outside in:
 //!
@@ -54,7 +54,11 @@ pub struct Authenticator {
 
 impl Authenticator {
     pub fn new(meta: Meta, secrets: SecretBox, region: String) -> Self {
-        Self { meta, secrets, region }
+        Self {
+            meta,
+            secrets,
+            region,
+        }
     }
 
     pub fn region(&self) -> &str {
@@ -77,10 +81,9 @@ impl Authenticator {
             return Err(S3Error::invalid_access_key(access_key));
         }
         if let Some(exp) = &rec.expires_at {
-            if let Ok(dt) = time::OffsetDateTime::parse(
-                exp,
-                &time::format_description::well_known::Rfc3339,
-            ) {
+            if let Ok(dt) =
+                time::OffsetDateTime::parse(exp, &time::format_description::well_known::Rfc3339)
+            {
                 if dt.unix_timestamp() < now_rfc3339_unix() {
                     return Err(S3Error::access_denied("The access key has expired."));
                 }
@@ -89,7 +92,7 @@ impl Authenticator {
         let secret = self
             .secrets
             .open(&rec.secret_sealed)
-            .map_err(|e| S3Error::internal(e))?;
+            .map_err(S3Error::internal)?;
         let secret = String::from_utf8(secret).map_err(S3Error::internal)?;
         Ok((rec, secret))
     }
@@ -179,7 +182,11 @@ impl Authenticator {
         bucket: &BucketMeta,
         need: BucketPerms,
     ) -> Result<(), S3Error> {
-        let perms = bucket.perms.get(&principal.access_key).copied().unwrap_or_default();
+        let perms = bucket
+            .perms
+            .get(&principal.access_key)
+            .copied()
+            .unwrap_or_default();
         if need.can_read() && !perms.can_read() {
             return Err(S3Error::access_denied(format!(
                 "Access key `{}` has no read permission on bucket `{}`.",
@@ -264,7 +271,9 @@ impl Authenticator {
         url_base: &str,
     ) -> Result<PresignedUrl, S3Error> {
         if !matches!(method, Method::GET | Method::HEAD) {
-            return Err(S3Error::access_denied("Only GET and HEAD can be presigned."));
+            return Err(S3Error::access_denied(
+                "Only GET and HEAD can be presigned.",
+            ));
         }
         if ttl_secs == 0 || ttl_secs > sigv4::MAX_PRESIGN_SECS {
             return Err(S3Error::invalid_request(
@@ -274,9 +283,7 @@ impl Authenticator {
         let (_rec, secret) = self.lookup(access_key)?;
         let when = time::OffsetDateTime::from_unix_timestamp(now)
             .map_err(|_| S3Error::internal("bad clock"))?;
-        let fmt = time::macros::format_description!(
-            "[year][month][day]T[hour][minute][second]Z"
-        );
+        let fmt = time::macros::format_description!("[year][month][day]T[hour][minute][second]Z");
         let amz_date = when.format(&fmt).map_err(|_| S3Error::internal("format"))?;
         let date = amz_date[..8].to_string();
 
@@ -284,7 +291,10 @@ impl Authenticator {
         let scope = format!("{date}/{}/{}/aws4_request", self.region, "s3");
         let query: Vec<(String, String)> = {
             let mut q = vec![
-                ("X-Amz-Algorithm".to_string(), "AWS4-HMAC-SHA256".to_string()),
+                (
+                    "X-Amz-Algorithm".to_string(),
+                    "AWS4-HMAC-SHA256".to_string(),
+                ),
                 (
                     "X-Amz-Credential".to_string(),
                     format!("{access_key}/{scope}"),
@@ -293,7 +303,12 @@ impl Authenticator {
                 ("X-Amz-Expires".to_string(), ttl_secs.to_string()),
                 ("X-Amz-SignedHeaders".to_string(), signed_headers),
             ];
-            q.extend(extra_query.iter().filter(|(k, _)| !k.starts_with("X-Amz-")).cloned());
+            q.extend(
+                extra_query
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with("X-Amz-"))
+                    .cloned(),
+            );
             q
         };
 
@@ -302,14 +317,13 @@ impl Authenticator {
         // see on the request, otherwise every URL we mint would 403.
         headers.insert(
             "host",
-            HeaderValue::from_str(host).map_err(|_| S3Error::internal("invalid host for presign"))?,
+            HeaderValue::from_str(host)
+                .map_err(|_| S3Error::internal("invalid host for presign"))?,
         );
 
         let raw_query = {
-            let mut pairs: Vec<(String, String)> = query
-                .iter()
-                .map(|(k, v)| (pct(k), pct(v)))
-                .collect();
+            let mut pairs: Vec<(String, String)> =
+                query.iter().map(|(k, v)| (pct(k), pct(v))).collect();
             pairs.sort();
             pairs
                 .iter()
@@ -339,8 +353,7 @@ impl Authenticator {
         // The URL must carry exactly the path we signed, so canonicalise it
         // strictly: S3 signs the percent-encoded form. Decode first so a caller
         // passing an already-encoded path is not double-encoded.
-        let signed_path =
-            sigv4::uri_encode_path(&sigv4::percent_decode(raw_path));
+        let signed_path = sigv4::uri_encode_path(&sigv4::percent_decode(raw_path));
         let expected = sigv4::compute_signature(
             &req,
             &secret,
@@ -374,14 +387,31 @@ pub struct PresignedUrl {
 fn pct(s: &str) -> String {
     use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
     const SET: &AsciiSet = &CONTROLS
-        .add(b' ').add(b'"').add(b'#').add(b'%').add(b'&').add(b'+').add(b',')
-        .add(b':').add(b';').add(b'<').add(b'=').add(b'>').add(b'?').add(b'@')
-        .add(b'[').add(b'\\').add(b']').add(b'^').add(b'`').add(b'{').add(b'|')
-        .add(b'}').add(b'/');
+        .add(b' ')
+        .add(b'"')
+        .add(b'#')
+        .add(b'%')
+        .add(b'&')
+        .add(b'+')
+        .add(b',')
+        .add(b':')
+        .add(b';')
+        .add(b'<')
+        .add(b'=')
+        .add(b'>')
+        .add(b'?')
+        .add(b'@')
+        .add(b'[')
+        .add(b'\\')
+        .add(b']')
+        .add(b'^')
+        .add(b'`')
+        .add(b'{')
+        .add(b'|')
+        .add(b'}')
+        .add(b'/');
     utf8_percent_encode(s, SET).to_string()
 }
-
-
 
 fn now_rfc3339_unix() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
@@ -394,7 +424,8 @@ mod tests {
     use axum::http::HeaderValue;
 
     fn setup() -> (std::path::PathBuf, Authenticator) {
-        let dir = std::env::temp_dir().join(format!("hejiu45-auth-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hejiu45-auth-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let m = Meta::open(&dir.join("meta.redb")).unwrap();
         let mut master = [3u8; 32];
@@ -421,8 +452,15 @@ mod tests {
     fn secret_is_sealed_at_rest_and_roundtrips() {
         let (dir, auth) = setup();
         let (rec, secret) = auth.create_access_key("ci", "admin", None).unwrap();
-        let raw = auth.meta().get_json::<AccessKeyRecord>(ACCESS_KEYS, &rec.access_key_id).unwrap().unwrap();
-        assert!(!raw.secret_sealed.contains(&secret), "secret leaked in plaintext");
+        let raw = auth
+            .meta()
+            .get_json::<AccessKeyRecord>(ACCESS_KEYS, &rec.access_key_id)
+            .unwrap()
+            .unwrap();
+        assert!(
+            !raw.secret_sealed.contains(&secret),
+            "secret leaked in plaintext"
+        );
         let (_, opened) = auth.lookup(&rec.access_key_id).unwrap();
         assert_eq!(opened, secret);
         let _ = std::fs::remove_dir_all(&dir);
@@ -433,7 +471,9 @@ mod tests {
         let (dir, auth) = setup();
         let (mut rec, _) = auth.create_access_key("ci", "admin", None).unwrap();
         rec.enabled = false;
-        auth.meta().put_json(ACCESS_KEYS, &rec.access_key_id, &rec).unwrap();
+        auth.meta()
+            .put_json(ACCESS_KEYS, &rec.access_key_id, &rec)
+            .unwrap();
         assert!(auth.lookup(&rec.access_key_id).is_err());
 
         let (rec2, _) = auth
@@ -453,9 +493,21 @@ mod tests {
         let mut b = b;
         b.perms.insert(wo.access_key_id.clone(), BucketPerms::WRITE);
 
-        let p_ro = Principal { access_key: ro.access_key_id.clone(), label: "ro".into(), style: sigv4::AuthStyle::Header };
-        let p_wo = Principal { access_key: wo.access_key_id.clone(), label: "wo".into(), style: sigv4::AuthStyle::Header };
-        let p_none = Principal { access_key: none.access_key_id.clone(), label: "none".into(), style: sigv4::AuthStyle::Header };
+        let p_ro = Principal {
+            access_key: ro.access_key_id.clone(),
+            label: "ro".into(),
+            style: sigv4::AuthStyle::Header,
+        };
+        let p_wo = Principal {
+            access_key: wo.access_key_id.clone(),
+            label: "wo".into(),
+            style: sigv4::AuthStyle::Header,
+        };
+        let p_none = Principal {
+            access_key: none.access_key_id.clone(),
+            label: "none".into(),
+            style: sigv4::AuthStyle::Header,
+        };
 
         assert!(auth.authorize(&p_ro, &b, BucketPerms::READ).is_ok());
         assert!(auth.authorize(&p_ro, &b, BucketPerms::WRITE).is_err());
@@ -474,7 +526,11 @@ mod tests {
         auth.meta().put_json(meta::BUCKETS, "data", &b).unwrap();
         let (fresh, _) = auth.rotate_access_key(&old.access_key_id).unwrap();
         assert_ne!(fresh.access_key_id, old.access_key_id);
-        let stored: BucketMeta = auth.meta().get_json(meta::BUCKETS, "data").unwrap().unwrap();
+        let stored: BucketMeta = auth
+            .meta()
+            .get_json(meta::BUCKETS, "data")
+            .unwrap()
+            .unwrap();
         assert!(stored.perms.contains_key(&fresh.access_key_id));
         assert!(!stored.perms.contains_key(&old.access_key_id));
         assert!(auth.lookup(&old.access_key_id).is_err());
@@ -516,7 +572,13 @@ mod tests {
             let parsed = sigv4::parse(&headers, &q).unwrap().unwrap();
             let (_, secret) = auth.lookup(&rec.access_key_id).unwrap();
             let expected = sigv4::compute_signature(
-                &parsed, &secret, &Method::GET, p, query, &headers, "UNSIGNED-PAYLOAD",
+                &parsed,
+                &secret,
+                &Method::GET,
+                p,
+                query,
+                &headers,
+                "UNSIGNED-PAYLOAD",
             )
             .unwrap();
             assert_eq!(expected, parsed.signature, "host {host}");
@@ -525,7 +587,13 @@ mod tests {
             let mut other = HeaderMap::new();
             other.insert("host", HeaderValue::from_static("evil.example.com"));
             let bad = sigv4::compute_signature(
-                &parsed, &secret, &Method::GET, p, query, &other, "UNSIGNED-PAYLOAD",
+                &parsed,
+                &secret,
+                &Method::GET,
+                p,
+                query,
+                &other,
+                "UNSIGNED-PAYLOAD",
             )
             .unwrap();
             assert_ne!(bad, parsed.signature);
@@ -533,14 +601,26 @@ mod tests {
 
         // Expiry is enforced against X-Amz-Date + X-Amz-Expires.
         let url = auth
-            .presign(&rec.access_key_id, Method::GET, path, &[], 300, now, "oss.example.com", "https://oss.example.com")
+            .presign(
+                &rec.access_key_id,
+                Method::GET,
+                path,
+                &[],
+                300,
+                now,
+                "oss.example.com",
+                "https://oss.example.com",
+            )
             .unwrap();
         let query = url.url.split_once('?').unwrap().1.to_string();
         let mut headers = HeaderMap::new();
         headers.insert("host", HeaderValue::from_static("oss.example.com"));
-        let parsed = sigv4::parse(&headers, &sigv4::AuthQuery::parse(&sigv4::parse_query_pairs(&query)))
-            .unwrap()
-            .unwrap();
+        let parsed = sigv4::parse(
+            &headers,
+            &sigv4::AuthQuery::parse(&sigv4::parse_query_pairs(&query)),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(parsed.amz_date, "20260101T120000Z");
         assert!(sigv4::check_timestamp(&parsed, &query, now + 200).is_ok());
         assert!(sigv4::check_timestamp(&parsed, &query, now + 301).is_err());
@@ -557,7 +637,16 @@ mod tests {
         // Space, `$` and `:` — three characters SDKs disagree about.
         let strict = "/photos/a%20b%24c%3Ad.bin";
         let url = auth
-            .presign(&rec.access_key_id, Method::GET, strict, &[], 60, now, "oss.example.com", "https://oss.example.com")
+            .presign(
+                &rec.access_key_id,
+                Method::GET,
+                strict,
+                &[],
+                60,
+                now,
+                "oss.example.com",
+                "https://oss.example.com",
+            )
             .unwrap();
         let (path, query) = url
             .url
@@ -577,7 +666,13 @@ mod tests {
         .unwrap();
         let (_, secret) = auth.lookup(&rec.access_key_id).unwrap();
         let expected = sigv4::compute_signature(
-            &parsed, &secret, &Method::GET, path, query, &headers, "UNSIGNED-PAYLOAD",
+            &parsed,
+            &secret,
+            &Method::GET,
+            path,
+            query,
+            &headers,
+            "UNSIGNED-PAYLOAD",
         )
         .unwrap();
         assert_eq!(expected, parsed.signature);
@@ -589,24 +684,46 @@ mod tests {
         let (dir, auth) = setup();
         let (rec, _) = auth.create_access_key("x", "admin", None).unwrap();
         let now = sigv4::parse_amz_date("20260101T120000Z").unwrap();
-        assert!(auth.presign(&rec.access_key_id, Method::PUT, "/b/k", &[], 60, now, "oss.example.com", "https://oss.example.com").is_err());
-        assert!(auth.presign(&rec.access_key_id, Method::GET, "/b/k", &[], 0, now, "oss.example.com", "https://oss.example.com").is_err());
         assert!(
-            auth.presign(&rec.access_key_id, Method::GET, "/b/k", &[], sigv4::MAX_PRESIGN_SECS + 1, now, "oss.example.com", "https://oss.example.com")
-                .is_err()
+            auth.presign(
+                &rec.access_key_id,
+                Method::PUT,
+                "/b/k",
+                &[],
+                60,
+                now,
+                "oss.example.com",
+                "https://oss.example.com"
+            )
+            .is_err()
+        );
+        assert!(
+            auth.presign(
+                &rec.access_key_id,
+                Method::GET,
+                "/b/k",
+                &[],
+                0,
+                now,
+                "oss.example.com",
+                "https://oss.example.com"
+            )
+            .is_err()
+        );
+        assert!(
+            auth.presign(
+                &rec.access_key_id,
+                Method::GET,
+                "/b/k",
+                &[],
+                sigv4::MAX_PRESIGN_SECS + 1,
+                now,
+                "oss.example.com",
+                "https://oss.example.com"
+            )
+            .is_err()
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-
-
-
-
-
-
-
-
-
-
-
 

@@ -158,7 +158,8 @@ mod tests {
     use crate::crypto::hash_admin_password;
 
     fn setup() -> (std::path::PathBuf, Meta, AdminUser) {
-        let dir = std::env::temp_dir().join(format!("hejiu45-sess-{}", uuid::Uuid::new_v4().simple()));
+        let dir =
+            std::env::temp_dir().join(format!("hejiu45-sess-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let meta = Meta::open(&dir.join("meta.redb")).unwrap();
         let user = AdminUser {
@@ -231,7 +232,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(sweep(&meta), 1);
-        assert!(meta.get_json::<SessionRecord>(SESSIONS, "stale").unwrap().is_none());
+        assert!(
+            meta.get_json::<SessionRecord>(SESSIONS, "stale")
+                .unwrap()
+                .is_none()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

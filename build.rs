@@ -16,10 +16,7 @@ fn main() {
              Run `npm --prefix frontend ci && npm --prefix frontend run build` for the real console."
         );
         let _ = std::fs::create_dir_all(dist);
-        let _ = std::fs::write(
-            dist.join("index.html"),
-            PLACEHOLDER,
-        );
+        let _ = std::fs::write(dist.join("index.html"), PLACEHOLDER);
     }
 
     // Rebuild whenever the bundle changes.

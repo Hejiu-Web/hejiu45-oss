@@ -157,10 +157,8 @@ impl Args {
         // trailing slash.
         let p = args.s3_prefix.trim().trim_end_matches('/').to_string();
         args.s3_prefix = if p == "/" { String::new() } else { p };
-        if args.tls == TlsMode::Manual {
-            if args.tls_cert.is_none() || args.tls_key.is_none() {
-                anyhow::bail!("`--tls manual` requires both --tls-cert and --tls-key");
-            }
+        if args.tls == TlsMode::Manual && (args.tls_cert.is_none() || args.tls_key.is_none()) {
+            anyhow::bail!("`--tls manual` requires both --tls-cert and --tls-key");
         }
         Ok(args)
     }
@@ -213,5 +211,4 @@ mod tests {
         assert!(!a.secure_cookies());
     }
 }
-
 

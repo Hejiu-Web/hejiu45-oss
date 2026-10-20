@@ -1,0 +1,46 @@
+# hejiu45-oss — Caddyfile (alternative to Nginx)
+#
+# Caddy obtains and renews Let's Encrypt certificates automatically, so this is
+# the shortest path to a trusted HTTPS endpoint:
+#
+#   sudo caddy run --config deploy/caddy/Caddyfile
+#
+# Run the server with `--tls reverse-proxy` so it trusts `X-Forwarded-Proto`.
+
+oss.example.com {
+	encode zstd gzip
+
+	# Caddy sets X-Forwarded-* automatically; Host is preserved for SigV4.
+	reverse_proxy 127.0.0.1:9000 {
+		# Stream uploads/downloads instead of buffering them in memory.
+		flush_interval -1
+		request_buffers 256KiB
+		response_buffers 256KiB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Console assets are content-hashed.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	log {
+		output stderr
+		format console
+	}
+}
+
+# Optional: a dedicated S3 hostname. With this, run the binary with
+# `--s3-prefix ""` and point SDKs at s3.example.com with path-style addressing.
+#
+# s3.example.com {
+# 	reverse_proxy 127.0.0.1:9000 {
+# 		flush_interval -1
+# 	}
+# }

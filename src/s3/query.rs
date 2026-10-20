@@ -1,4 +1,4 @@
-//! Query-string parsing for S3 operations.
+﻿//! Query-string parsing for S3 operations.
 //!
 //! S3 uses valueless parameters as sub-resource selectors (`?acl`, `?uploads`,
 //! `?delete`) and plain parameters as arguments (`?prefix=`, `?list-type=2`).
@@ -86,14 +86,23 @@ impl S3Query {
 
     pub fn u32_value(&self, key: &str) -> Result<Option<u32>, String> {
         match self.value(key) {
-            None => Ok(None),
-            Some(v) if v.is_empty() => Ok(None),
+            // `?max-keys` and `?max-keys=` both mean "not provided".
+            None | Some("") => Ok(None),
             Some(v) => v
                 .parse::<u32>()
                 .map(Some)
                 .map_err(|_| format!("{key} must be a non-negative integer")),
         }
     }
+}
+
+/// Why a `Range` header could not be satisfied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeError {
+    /// Syntactically invalid header.
+    Malformed,
+    /// Valid syntax, but the range starts past the end of the object.
+    Unsatisfiable,
 }
 
 /// Parse `Range: bytes=start-end` (single range only).
@@ -114,10 +123,12 @@ impl ByteRange {
 
     /// Parse a single-range `Range` header against a known object size.
     ///
-    /// Returns `Ok(None)` when the header is absent, `Err(())` when it is
-    /// syntactically invalid, and a range that may be unsatisfiable (start past
-    /// EOF) so the caller can emit `416` with the right `Content-Range`.
-    pub fn parse(header: &str, size: u64) -> Result<Option<Result<ByteRange, ()>>, ()> {
+    /// Returns `Ok(None)` when the header is absent or uses another unit,
+    /// `Err(RangeError::Malformed)` when it is syntactically invalid, and
+    /// `Ok(Some(Err(RangeError::Unsatisfiable)))` for a syntactically valid
+    /// range past the end, so the caller can emit `416` with the right
+    /// `Content-Range`.
+    pub fn parse(header: &str, size: u64) -> Result<Option<Result<ByteRange, RangeError>>, RangeError> {
         let Some(spec) = header.trim().strip_prefix("bytes=") else {
             return Ok(None);
         };
@@ -125,39 +136,39 @@ impl ByteRange {
         // serving a single range is the compatible subset.
         let spec = spec.split(',').next().unwrap_or("").trim();
         if spec.is_empty() {
-            return Err(());
+            return Err(RangeError::Malformed);
         }
-        let (start_s, end_s) = spec.split_once('-').ok_or(())?;
+        let (start_s, end_s) = spec.split_once('-').ok_or(RangeError::Malformed)?;
         if size == 0 {
             // Any range on an empty object is unsatisfiable.
-            return Ok(Some(Err(())));
+            return Ok(Some(Err(RangeError::Unsatisfiable)));
         }
         let (start, end) = match (start_s.trim(), end_s.trim()) {
-            ("", "") => return Err(()),
+            ("", "") => return Err(RangeError::Malformed),
             ("", suffix) => {
                 // Suffix range: last N bytes.
-                let n: u64 = suffix.parse().map_err(|_| ())?;
+                let n: u64 = suffix.parse().map_err(|_| RangeError::Malformed)?;
                 if n == 0 {
-                    return Ok(Some(Err(())));
+                    return Ok(Some(Err(RangeError::Unsatisfiable)));
                 }
                 let n = n.min(size);
                 (size - n, size - 1)
             }
             (start, "") => {
-                let s: u64 = start.parse().map_err(|_| ())?;
+                let s: u64 = start.parse().map_err(|_| RangeError::Malformed)?;
                 (s, size - 1)
             }
             (start, end) => {
-                let s: u64 = start.parse().map_err(|_| ())?;
-                let e: u64 = end.parse().map_err(|_| ())?;
+                let s: u64 = start.parse().map_err(|_| RangeError::Malformed)?;
+                let e: u64 = end.parse().map_err(|_| RangeError::Malformed)?;
                 if s > e {
-                    return Err(());
+                    return Err(RangeError::Malformed);
                 }
                 (s, e.min(size - 1))
             }
         };
         if start >= size {
-            return Ok(Some(Err(())));
+            return Ok(Some(Err(RangeError::Unsatisfiable)));
         }
         Ok(Some(Ok(ByteRange { start, end })))
     }
@@ -194,19 +205,34 @@ mod tests {
 
     #[test]
     fn range_parsing() {
-        assert_eq!(ByteRange::parse("bytes=0-9", 100), Ok(Some(Ok(ByteRange { start: 0, end: 9 }))));
-        assert_eq!(ByteRange::parse("bytes=90-", 100), Ok(Some(Ok(ByteRange { start: 90, end: 99 }))));
-        assert_eq!(ByteRange::parse("bytes=-10", 100), Ok(Some(Ok(ByteRange { start: 90, end: 99 }))));
+        assert_eq!(
+            ByteRange::parse("bytes=0-9", 100),
+            Ok(Some(Ok(ByteRange { start: 0, end: 9 })))
+        );
+        assert_eq!(
+            ByteRange::parse("bytes=90-", 100),
+            Ok(Some(Ok(ByteRange { start: 90, end: 99 })))
+        );
+        assert_eq!(
+            ByteRange::parse("bytes=-10", 100),
+            Ok(Some(Ok(ByteRange { start: 90, end: 99 })))
+        );
         // End beyond EOF is clamped.
-        assert_eq!(ByteRange::parse("bytes=95-200", 100), Ok(Some(Ok(ByteRange { start: 95, end: 99 }))));
+        assert_eq!(
+            ByteRange::parse("bytes=95-200", 100),
+            Ok(Some(Ok(ByteRange { start: 95, end: 99 })))
+        );
         // Suffix larger than the object returns the whole object.
-        assert_eq!(ByteRange::parse("bytes=-500", 100), Ok(Some(Ok(ByteRange { start: 0, end: 99 }))));
+        assert_eq!(
+            ByteRange::parse("bytes=-500", 100),
+            Ok(Some(Ok(ByteRange { start: 0, end: 99 })))
+        );
         // Unsatisfiable.
-        assert_eq!(ByteRange::parse("bytes=100-", 100), Ok(Some(Err(()))));
-        assert_eq!(ByteRange::parse("bytes=0-0", 0), Ok(Some(Err(()))));
+        assert_eq!(ByteRange::parse("bytes=100-", 100), Ok(Some(Err(RangeError::Unsatisfiable))));
+        assert_eq!(ByteRange::parse("bytes=0-0", 0), Ok(Some(Err(RangeError::Unsatisfiable))));
         // Malformed.
-        assert_eq!(ByteRange::parse("bytes=abc", 100), Err(()));
-        assert_eq!(ByteRange::parse("bytes=5-1", 100), Err(()));
+        assert_eq!(ByteRange::parse("bytes=abc", 100), Err(RangeError::Malformed));
+        assert_eq!(ByteRange::parse("bytes=5-1", 100), Err(RangeError::Malformed));
         // Absent / non-byte units.
         assert_eq!(ByteRange::parse("items=0-5", 100), Ok(None));
     }
@@ -217,3 +243,5 @@ mod tests {
         assert_eq!(ByteRange { start: 5, end: 5 }.len(), 1);
     }
 }
+
+

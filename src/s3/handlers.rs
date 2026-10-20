@@ -107,8 +107,6 @@ impl S3Request {
     }
 }
 
-
-
 fn xml_response(status: StatusCode, body: String, extra: Vec<(&'static str, String)>) -> Response {
     let mut res = Response::new(Body::from(body));
     *res.status_mut() = status;
@@ -147,7 +145,11 @@ pub(crate) fn load_bucket(state: &AppState, name: &str) -> Result<BucketMeta, S3
         .ok_or_else(|| S3Error::no_such_bucket(name))
 }
 
-pub(crate) fn load_object(state: &AppState, bucket: &str, key: &str) -> Result<ObjectMeta, S3Error> {
+pub(crate) fn load_object(
+    state: &AppState,
+    bucket: &str,
+    key: &str,
+) -> Result<ObjectMeta, S3Error> {
     state
         .meta
         .get_json::<ObjectMeta>(OBJECTS, &composite_key(bucket, key))
@@ -249,7 +251,10 @@ async fn bucket_and_body(
         (Method::GET, Some("location")) => {
             let b = load_bucket(st, bucket)?;
             st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
-            let inner = format!("<LocationConstraint>{}</LocationConstraint>", xml_escape(st.region()));
+            let inner = format!(
+                "<LocationConstraint>{}</LocationConstraint>",
+                xml_escape(st.region())
+            );
             Ok(xml_response(
                 StatusCode::OK,
                 xml::envelope("LocationConstraint", &inner),
@@ -271,7 +276,12 @@ async fn bucket_and_body(
 
 async fn create_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, S3Error> {
     validate_bucket_name(bucket)?;
-    if st.meta.get_json::<BucketMeta>(BUCKETS, bucket).map_err(S3Error::internal)?.is_some() {
+    if st
+        .meta
+        .get_json::<BucketMeta>(BUCKETS, bucket)
+        .map_err(S3Error::internal)?
+        .is_some()
+    {
         return Err(S3Error::bucket_already_exists(bucket));
     }
     let meta = BucketMeta {
@@ -291,7 +301,8 @@ async fn create_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Re
     let mut res = empty_response(StatusCode::OK, s3.response_headers());
     res.headers_mut().insert(
         header::LOCATION,
-        HeaderValue::from_str(&format!("/{bucket}")).unwrap_or_else(|_| HeaderValue::from_static("/")),
+        HeaderValue::from_str(&format!("/{bucket}"))
+            .unwrap_or_else(|_| HeaderValue::from_static("/")),
     );
     Ok(res)
 }
@@ -305,19 +316,16 @@ fn head_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, 
 async fn delete_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
     st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
-    let has_objects = st
+    let has_objects = !st
         .meta
         .scan_json::<ObjectMeta>(OBJECTS, Some(&format!("{bucket}\u{0}")), 1)
         .map_err(S3Error::internal)?
-        .first()
-        .is_some();
+        .is_empty();
     if has_objects {
         return Err(S3Error::bucket_not_empty());
     }
     // Abandoned multipart uploads must not keep a bucket alive either.
-    let _ = st
-        .meta
-        .delete_prefix(MULTIPARTS, &format!("{bucket}\u{0}"));
+    let _ = st.meta.delete_prefix(MULTIPARTS, &format!("{bucket}\u{0}"));
     st.meta
         .delete_row(BUCKETS, bucket)
         .map_err(S3Error::internal)?;
@@ -326,7 +334,10 @@ async fn delete_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Re
         .await
         .map_err(S3Error::internal)?;
     state_audit(st, s3, "bucket.delete", bucket, "");
-    Ok(empty_response(StatusCode::NO_CONTENT, s3.response_headers()))
+    Ok(empty_response(
+        StatusCode::NO_CONTENT,
+        s3.response_headers(),
+    ))
 }
 
 fn list_objects_v1(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, S3Error> {
@@ -352,7 +363,10 @@ fn list_objects_common(
 
     let prefix = s3.query.value("prefix").unwrap_or("").to_string();
     let delimiter = s3.query.value("delimiter").unwrap_or("").to_string();
-    let max_keys = s3.query.u32_value("max-keys").map_err(|e| S3Error::invalid_argument("max-keys", &e))?;
+    let max_keys = s3
+        .query
+        .u32_value("max-keys")
+        .map_err(|e| S3Error::invalid_argument("max-keys", &e))?;
     let max_keys = max_keys.unwrap_or(1000).clamp(1, 1000) as usize;
     let start_after = s3.query.value("start-after").unwrap_or("").to_string();
     let token = s3
@@ -419,7 +433,10 @@ fn list_objects_common(
         inner.push_str(&format!("<Name>{}</Name>", xml_escape(bucket)));
         inner.push_str(&format!("<Prefix>{}</Prefix>", xml_escape(&prefix)));
         inner.push_str(&format!("<MaxKeys>{max_keys}</MaxKeys>"));
-        inner.push_str(&format!("<KeyCount>{}</KeyCount>", contents.len() + common.len()));
+        inner.push_str(&format!(
+            "<KeyCount>{}</KeyCount>",
+            contents.len() + common.len()
+        ));
         inner.push_str(&format!("<IsTruncated>{truncated}</IsTruncated>"));
         if !start_after.is_empty() {
             inner.push_str(&format!(
@@ -437,7 +454,10 @@ fn list_objects_common(
         inner.push_str(&format!("<Name>{}</Name>", xml_escape(bucket)));
         inner.push_str(&format!("<Prefix>{}</Prefix>", xml_escape(&prefix)));
         if !delimiter.is_empty() {
-            inner.push_str(&format!("<Delimiter>{}</Delimiter>", xml_escape(&delimiter)));
+            inner.push_str(&format!(
+                "<Delimiter>{}</Delimiter>",
+                xml_escape(&delimiter)
+            ));
         }
         inner.push_str(&format!("<MaxKeys>{max_keys}</MaxKeys>"));
         inner.push_str(&format!("<IsTruncated>{truncated}</IsTruncated>"));
@@ -454,7 +474,10 @@ fn list_objects_common(
         }
     }
     if !delimiter.is_empty() {
-        inner.push_str(&format!("<Delimiter>{}</Delimiter>", xml_escape(&delimiter)));
+        inner.push_str(&format!(
+            "<Delimiter>{}</Delimiter>",
+            xml_escape(&delimiter)
+        ));
     }
     for o in &contents {
         inner.push_str(&object_entry(o));
@@ -471,10 +494,10 @@ fn list_objects_common(
             xml_escape(&next_token)
         ));
     }
-    let root = if v2 { "ListBucketResult" } else { "ListBucketResult" };
+    // ListObjects and ListObjectsV2 share the same root element.
     Ok(xml_response(
         StatusCode::OK,
-        xml::envelope(root, &inner),
+        xml::envelope("ListBucketResult", &inner),
         s3.response_headers(),
     ))
 }
@@ -503,7 +526,7 @@ async fn delete_objects(
     let text = String::from_utf8_lossy(&body);
     let doc = XmlReader::new(&text)
         .parse()
-        .map_err(|e| S3Error::malformed_xml(e))?;
+        .map_err(S3Error::malformed_xml)?;
     let quiet = XmlReader::child_text(&doc, "Quiet") == Some("true");
     let keys: Vec<String> = doc
         .children
@@ -512,10 +535,14 @@ async fn delete_objects(
         .filter_map(|c| XmlReader::child_text(c, "Key").map(str::to_string))
         .collect();
     if keys.is_empty() {
-        return Err(S3Error::malformed_xml("DeleteObjects requires at least one <Object>."));
+        return Err(S3Error::malformed_xml(
+            "DeleteObjects requires at least one <Object>.",
+        ));
     }
     if keys.len() > 10_000 {
-        return Err(S3Error::malformed_xml("DeleteObjects accepts at most 10000 keys."));
+        return Err(S3Error::malformed_xml(
+            "DeleteObjects accepts at most 10000 keys.",
+        ));
     }
 
     let mut inner = String::new();
@@ -525,7 +552,10 @@ async fn delete_objects(
             Ok(existed) => {
                 deleted += 1;
                 if !quiet {
-                    inner.push_str(&format!("<Deleted><Key>{}</Key></Deleted>", xml_escape(key)));
+                    inner.push_str(&format!(
+                        "<Deleted><Key>{}</Key></Deleted>",
+                        xml_escape(key)
+                    ));
                     let _ = existed;
                 }
             }
@@ -537,7 +567,13 @@ async fn delete_objects(
             )),
         }
     }
-    state_audit(st, s3, "object.delete_many", bucket, &format!("{deleted} objects"));
+    state_audit(
+        st,
+        s3,
+        "object.delete_many",
+        bucket,
+        &format!("{deleted} objects"),
+    );
     Ok(xml_response(
         StatusCode::OK,
         xml::envelope("DeleteResult", &inner),
@@ -546,7 +582,11 @@ async fn delete_objects(
 }
 
 /// Delete one object (metadata first, then body). Idempotent.
-pub(crate) async fn delete_single_object(st: &AppState, bucket: &str, key: &str) -> Result<bool, S3Error> {
+pub(crate) async fn delete_single_object(
+    st: &AppState,
+    bucket: &str,
+    key: &str,
+) -> Result<bool, S3Error> {
     let existed = st
         .meta
         .delete_row(OBJECTS, &composite_key(bucket, key))
@@ -559,7 +599,12 @@ pub(crate) async fn delete_single_object(st: &AppState, bucket: &str, key: &str)
     Ok(existed)
 }
 
-pub(crate) fn adjust_bucket_stats(st: &AppState, bucket: &str, count_delta: i64, byte_delta: i64) -> anyhow::Result<()> {
+pub(crate) fn adjust_bucket_stats(
+    st: &AppState,
+    bucket: &str,
+    count_delta: i64,
+    byte_delta: i64,
+) -> anyhow::Result<()> {
     let Some(mut b) = st.meta.get_json::<BucketMeta>(BUCKETS, bucket)? else {
         return Ok(());
     };
@@ -600,7 +645,9 @@ async fn create_multipart(
     let key = s3
         .query
         .value("key")
-        .ok_or_else(|| S3Error::invalid_request("CreateMultipartUpload requires the `key` query parameter."))?
+        .ok_or_else(|| {
+            S3Error::invalid_request("CreateMultipartUpload requires the `key` query parameter.")
+        })?
         .to_string();
     crate::data::validate_object_key(&key)?;
     let b = load_bucket(st, bucket)?;
@@ -629,7 +676,13 @@ async fn create_multipart(
         xml_escape(&key),
         xml_escape(&upload_id)
     );
-    state_audit(st, s3, "object.multipart_init", &format!("{bucket}/{key}"), &upload_id);
+    state_audit(
+        st,
+        s3,
+        "object.multipart_init",
+        &format!("{bucket}/{key}"),
+        &upload_id,
+    );
     Ok(xml_response(
         StatusCode::OK,
         xml::envelope("InitiateMultipartUploadResult", &inner),
@@ -642,9 +695,11 @@ pub fn collect_user_meta(headers: &HeaderMap) -> std::collections::BTreeMap<Stri
     headers
         .iter()
         .filter_map(|(k, v)| {
-            k.as_str()
-                .strip_prefix("x-amz-meta-")
-                .and_then(|name| v.to_str().ok().map(|val| (name.to_string(), val.to_string())))
+            k.as_str().strip_prefix("x-amz-meta-").and_then(|name| {
+                v.to_str()
+                    .ok()
+                    .map(|val| (name.to_string(), val.to_string()))
+            })
         })
         .collect()
 }
@@ -663,16 +718,13 @@ pub fn collect_stored_headers(headers: &HeaderMap) -> std::collections::BTreeMap
         .filter_map(|(k, v)| {
             let name = k.as_str();
             if KEEP.contains(&name) {
-                v.to_str().ok().map(|val| (name.to_string(), val.to_string()))
+                v.to_str()
+                    .ok()
+                    .map(|val| (name.to_string(), val.to_string()))
             } else {
                 None
             }
         })
         .collect()
 }
-
-
-
-
-
 
