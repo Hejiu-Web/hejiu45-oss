@@ -66,6 +66,8 @@ uuid = { version = "1", features = ["v4", "fast-rng"] }
 thiserror = "2"
 anyhow = "1"
 parking_lot = "0.12"
+# Advisory single-instance lock (flock / LockFileEx) without unsafe code.
+fs2 = "0.4"
 
 # Dev-only helper binary (`cargo run --bin gen-cert`).
 rcgen = { version = "0.14", optional = true }
@@ -95,6 +97,7 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
 
 
 

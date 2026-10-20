@@ -174,87 +174,48 @@ fn bootstrap_admin(meta: &Meta, args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Best-effort single-instance guard: two processes sharing one data
-/// directory would corrupt the index, so hold an advisory lock file.
+/// Single-instance guard: two processes sharing one data directory would
+/// corrupt the metadata index, so hold an advisory lock on a lock file for the
+/// lifetime of the process.
+///
+/// `fs2` provides `flock` on unix and `LockFileEx` on Windows, holding the lock
+/// against the open file handle — which means the operating system releases it
+/// automatically when the process exits, including after a crash.
 fn acquire_data_lock(dir: &std::path::Path) -> anyhow::Result<DataLock> {
+    use fs2::FileExt;
+
     std::fs::create_dir_all(dir)?;
     let path = dir.join("server.lock");
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
+        .read(true)
         .write(true)
-        .open(&path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        // flock(LOCK_EX | LOCK_NB)
-        let r = unsafe_flock(file.as_raw_fd());
-        if !r {
-            anyhow::bail!(
-                "another {PRODUCT} instance is already using {}",
-                dir.display()
-            );
-        }
+        .open(&path)
+        .with_context(|| format!("opening lock file {}", path.display()))?;
+    match file.try_lock_exclusive() {
+        Ok(()) => {}
+        Err(_) => anyhow::bail!(
+            "another {PRODUCT} instance is already using {}",
+            dir.display()
+        ),
     }
-    #[cfg(not(unix))]
-    {
-        use std::io::Read;
-        let mut existing = String::new();
-        let _ = std::fs::File::open(&path).and_then(|mut f| f.read_to_string(&mut existing));
-        if let Some(pid) = existing
-            .trim()
-            .parse::<u32>()
-            .ok()
-            .filter(|p| pid_alive(*p))
-        {
-            anyhow::bail!(
-                "another {PRODUCT} instance (pid {pid}) is already using {}",
-                dir.display()
-            );
-        }
-        std::fs::write(&path, std::process::id().to_string())?;
-    }
-    Ok(DataLock {
-        path,
-        file: Some(file),
-    })
-}
-
-#[cfg(unix)]
-fn unsafe_flock(fd: i32) -> bool {
-    extern "C" {
-        fn flock(fd: i32, operation: i32) -> i32;
-    }
-    const LOCK_EX: i32 = 2;
-    const LOCK_NB: i32 = 4;
-    // SAFETY: `fd` is a valid open file descriptor for the lifetime of the call.
-    unsafe { flock(fd, LOCK_EX | LOCK_NB) == 0 }
-}
-
-#[cfg(not(unix))]
-fn pid_alive(pid: u32) -> bool {
-    std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-        .unwrap_or(false)
+    Ok(DataLock { file: Some(file) })
 }
 
 struct DataLock {
-    path: std::path::PathBuf,
     file: Option<std::fs::File>,
 }
 
 impl Drop for DataLock {
     fn drop(&mut self) {
-        #[cfg(not(unix))]
-        {
-            let _ = std::fs::remove_file(&self.path);
+        if let Some(f) = self.file.take() {
+            // The lock is released when the handle closes; unlock explicitly so
+            // a test or restart can reacquire immediately.
+            let _ = fs2::FileExt::unlock(&f);
         }
-        drop(self.file.take());
     }
 }
-
 /// Create an access key, optionally with a bucket, and print the secret once.
 fn init_access_key(
     auth: &hejiu45_oss::auth::Authenticator,
@@ -285,13 +246,12 @@ fn init_access_key(
         meta.put_json(BUCKETS, bucket, &b)?;
         println!("bucket: {bucket} (granted full access)");
     }
-    // Machine-readable last line pair so scripts can capture both values.
+    // Machine-readable lines so installers and CI can capture both values.
     println!("access_key_id: {}", rec.access_key_id);
     println!("secret_access_key: {secret}");
     println!("Store the secret now: it is sealed in the database and cannot be shown again.");
     Ok(())
 }
-
 fn restore(src: &std::path::Path, data_dir: &std::path::Path) -> anyhow::Result<()> {
     if !src.exists() {
         anyhow::bail!("backup file not found: {}", src.display());
