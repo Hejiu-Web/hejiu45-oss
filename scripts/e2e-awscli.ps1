@@ -16,15 +16,23 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$aws = (Get-Command aws -ErrorAction SilentlyContinue)
-if (-not $aws) {
-    $candidates = @(
+# `$IsWindows` only exists in PowerShell 7; derive it for Windows PowerShell 5.1.
+$script:IsWin = if ($null -ne $IsWindows) { $IsWindows } else { $env:OS -eq "Windows_NT" }
+# Prefer PATH (works on Linux/macOS runners); fall back to the Windows install
+# locations for developer machines.
+$awsCmd = Get-Command aws -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($awsCmd) {
+    $aws = $awsCmd.Source
+} else {
+    $aws = @(
         "$env:LOCALAPPDATA\Programs\Amazon\AWSCLIV2\aws.exe",
         "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
-    )
-    $aws = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $aws) { Write-Host "aws CLI not found" -ForegroundColor Red; exit 2 }
-} else { $aws = $aws.Source }
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+if (-not $aws -or -not (Test-Path $aws)) {
+    Write-Host "aws CLI not found on PATH" -ForegroundColor Red
+    exit 2
+}
 
 $env:AWS_DEFAULT_REGION = $Region
 $env:AWS_PAGER = ""
@@ -93,7 +101,7 @@ $uploadDir = Join-Path $work "up"
 New-Item -ItemType Directory -Force -Path $uploadDir | Out-Null
 Set-Content -Path (Join-Path $uploadDir "root.txt") -Value "root" -NoNewline -Encoding utf8
 New-Item -ItemType Directory -Force -Path (Join-Path $uploadDir "nested") | Out-Null
-Set-Content -Path (Join-Path $uploadDir "nested\deep.txt") -Value "deep" -NoNewline -Encoding utf8
+Set-Content -Path (Join-Path (Join-Path $uploadDir "nested") "deep.txt") -Value "deep" -NoNewline -Encoding utf8
 Check "s3 cp --recursive (nested keys)" {
     & $aws s3 cp $uploadDir "s3://$bucket/upload/" --recursive @S3 | Out-Null
     $raw = & $aws s3api list-objects-v2 --bucket $bucket --prefix "upload/" @S3 | Out-String
@@ -191,7 +199,13 @@ Check "s3api delete-objects (batch)" {
     $doc = '{"Objects":[{"Key":"copied.txt"},{"Key":"meta.txt"}],"Quiet":false}'
     $del = Join-Path $work "delete.json"
     [System.IO.File]::WriteAllText($del, $doc, (New-Object System.Text.UTF8Encoding($false)))
-    $raw = (& $aws s3api delete-objects --bucket $bucket --delete "file://$($del.Replace('\','/'))" @S3 2>&1 | Out-String)
+    # `file://` + absolute path: C:/... on Windows, /home/... on Linux.
+    $delUri = if ($script:IsWin) {
+        "file://$($del.Replace('\', '/'))"
+    } else {
+        "file://$del"
+    }
+    $raw = (& $aws s3api delete-objects --bucket $bucket --delete $delUri @S3 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0) { throw "delete-objects failed (exit $LASTEXITCODE): $raw" }
     $r = $raw | ConvertFrom-Json
     $deleted = @($r.Deleted | Where-Object { $_ })

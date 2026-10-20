@@ -33,6 +33,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # aws-lc-rs compiles C and assembly, so cmake, NASM and a C toolchain are
+      # required. Each matrix entry runs on a *native* runner for its
+      # architecture, so the plain host gcc is already the right compiler; it
+      # only needs to link against musl.
+      - name: Install the musl build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            musl-tools musl-dev cmake build-essential nasm perl
+          # musl-gcc ships only for the host arch; expose it as the default CC
+          # for both the build scripts and cc-rs.
+          echo "CC=musl-gcc" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
       - name: Build the console
         run: |
           cd frontend
