@@ -20,10 +20,10 @@ use crate::state::{AppState, capture_raw_path, security_headers};
 /// Build the full application router.
 pub fn build_router(state: AppState) -> Router {
     let s3_routes = Router::new()
-        .route("/", any(crate::s3::not_yet))
         .route("/healthz", get(crate::s3::health))
-        .route("/{bucket}", any(crate::s3::not_yet))
-        .route("/{bucket}/{*key}", any(crate::s3::not_yet));
+        .route("/", any(crate::s3::root))
+        .route("/{bucket}", any(crate::s3::bucket))
+        .route("/{bucket}/{*key}", any(crate::s3::object));
 
     Router::new()
         .route("/api/health", get(crate::admin::health))
@@ -83,3 +83,4 @@ async fn shutdown_signal() {
 async fn serve_tls(router: Router, addr: std::net::SocketAddr, cert: &std::path::Path, key: &std::path::Path) -> anyhow::Result<()> {
     anyhow::bail!("TLS support is built in a later step of this build")
 }
+

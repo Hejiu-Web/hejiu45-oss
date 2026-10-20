@@ -123,6 +123,20 @@ pub struct Args {
     /// Print the effective configuration and exit.
     #[arg(long)]
     pub print_config: bool,
+
+    /// Create (or re-label) one S3 access key and print its access key id and
+    /// secret, then exit. The secret is printed exactly once; only the sealed
+    /// form is stored.
+    #[arg(long, env = "HEJIU45_OSS_INIT_ACCESS_KEY")]
+    pub init_access_key: Option<String>,
+
+    /// Create a bucket and grant the key above full access to it.
+    #[arg(long, env = "HEJIU45_OSS_INIT_BUCKET")]
+    pub init_bucket: Option<String>,
+
+    /// Make the `--init-bucket` publicly readable.
+    #[arg(long, default_value_t = false)]
+    pub init_bucket_public_read: bool,
 }
 
 impl Args {
@@ -188,3 +202,4 @@ mod tests {
         assert!(!a.secure_cookies());
     }
 }
+

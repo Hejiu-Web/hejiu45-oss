@@ -76,6 +76,13 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let secrets = SecretBox::from_master(&master)?;
     let auth = hejiu45_oss::auth::Authenticator::new(meta.clone(), secrets, args.region.clone());
+
+    // Offline credential provisioning (also used by the e2e harness and by
+    // operators bootstrapping CI credentials without opening the console).
+    if let Some(label) = &args.init_access_key {
+        init_access_key(&auth, &meta, label, &args)?;
+        return Ok(());
+    }
     let state = AppState {
         args: Arc::new(args.clone()),
         meta: meta.clone(),
@@ -230,6 +237,44 @@ impl Drop for DataLock {
     }
 }
 
+/// Create an access key, optionally with a bucket, and print the secret once.
+fn init_access_key(
+    auth: &hejiu45_oss::auth::Authenticator,
+    meta: &Meta,
+    label: &str,
+    args: &Args,
+) -> anyhow::Result<()> {
+    use hejiu45_oss::meta::{BUCKETS, BucketMeta, BucketPerms};
+    let (rec, secret) = auth.create_access_key(label, "cli", None)?;
+    if let Some(bucket) = &args.init_bucket {
+        hejiu45_oss::data::validate_bucket_name(bucket)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let mut b: BucketMeta = match meta.get_json(BUCKETS, bucket)? {
+            Some(existing) => existing,
+            None => BucketMeta {
+                name: bucket.clone(),
+                created_at: now_rfc3339(),
+                owner: "cli".to_string(),
+                perms: Default::default(),
+                visibility: "private".to_string(),
+                object_count: 0,
+                total_bytes: 0,
+            },
+        };
+        b.perms.insert(rec.access_key_id.clone(), BucketPerms::FULL);
+        if args.init_bucket_public_read {
+            b.visibility = "public-read".to_string();
+        }
+        meta.put_json(BUCKETS, bucket, &b)?;
+        println!("bucket: {bucket} (granted full access)");
+    }
+    // Machine-readable last line pair so scripts can capture both values.
+    println!("access_key_id: {}", rec.access_key_id);
+    println!("secret_access_key: {secret}");
+    println!("Store the secret now: it is sealed in the database and cannot be shown again.");
+    Ok(())
+}
+
 fn restore(src: &std::path::Path, data_dir: &std::path::Path) -> anyhow::Result<()> {
     if !src.exists() {
         anyhow::bail!("backup file not found: {}", src.display());
@@ -250,3 +295,4 @@ fn restore(src: &std::path::Path, data_dir: &std::path::Path) -> anyhow::Result<
     println!("restore the `objects/` directory from your backup as well.");
     Ok(())
 }
+

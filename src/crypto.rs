@@ -1,4 +1,4 @@
-﻿//! Cryptographic primitives and key management.
+//! Cryptographic primitives and key management.
 //!
 //! Design notes (see `docs/SECURITY.md`):
 //! * S3 secret access keys are **never** stored in plaintext. They are sealed

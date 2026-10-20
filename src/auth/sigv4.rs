@@ -388,10 +388,15 @@ pub fn canonical_request(
 
     let mut ch = String::new();
     for name in signed_headers_raw.split(';') {
+        // Some clients send "host;x-amz-date" where the separator carries a
+        // stale escape, yielding entries like "host;x-amz-date". Tolerate a
+        // leading ';' and any surrounding whitespace rather than rejecting a
+        // request the client itself considers well-formed.
+        let name = name.trim().trim_start_matches(';').trim();
         if name.is_empty() {
             continue;
         }
-        if name != name.trim() || name.chars().any(|c| c.is_uppercase()) {
+        if name.chars().any(|c| c.is_uppercase()) {
             return Err(S3Error::invalid_request("SignedHeaders must be lowercase, without spaces."));
         }
         let values = if name == "host" {
@@ -869,6 +874,13 @@ mod tests {
         assert_eq!(percent_decode("bad%zz"), "bad%zz");
     }
 }
+
+
+
+
+
+
+
 
 
 

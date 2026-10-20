@@ -1,4 +1,4 @@
-﻿//! Object body storage on the local filesystem.
+//! Object body storage on the local filesystem.
 //!
 //! Layout under `--data-dir`:
 //!
@@ -49,6 +49,79 @@ pub struct StoredObject {
     /// The temporary path the body was written to; call [`Data::commit`] to
     /// move it into place.
     pub staged: PathBuf,
+    /// MIME type guessed from the first bytes (`application/octet-stream`
+    /// when unknown). Used only when the client sent no `Content-Type`.
+    pub sniffed_content_type: &'static str,
+}
+
+/// Magic-number sniffing for the handful of types where it matters most.
+///
+/// S3 itself does not sniff, but clients that omit `Content-Type`
+/// (`curl -T`, some SDKs) otherwise produce objects served as
+/// `application/octet-stream`. Only unambiguous signatures are detected:
+/// text is never sniffed to `text/html`, because that would turn a bucket
+/// into an XSS vector.
+pub fn sniff_content_type(head: &[u8]) -> &'static str {
+    const RIFF: &[u8] = b"RIFF";
+    let riff_sub = |tag: &[u8]| head.starts_with(RIFF) && head.len() >= 12 && &head[8..12] == tag;
+    if head.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return "image/png";
+    }
+    if head.len() > 2 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF {
+        return "image/jpeg";
+    }
+    if head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a") {
+        return "image/gif";
+    }
+    if riff_sub(b"WEBP") {
+        return "image/webp";
+    }
+    if riff_sub(b"WAVE") {
+        return "audio/wav";
+    }
+    if riff_sub(b"AVI ") {
+        return "video/x-msvideo";
+    }
+    if head.starts_with(b"OggS") {
+        return "audio/ogg";
+    }
+    if head.starts_with(b"ID3") {
+        return "audio/mpeg";
+    }
+    if head.starts_with(b"fLaC") {
+        return "audio/flac";
+    }
+    if head.len() >= 12 && &head[4..8] == b"ftyp" {
+        return "video/mp4";
+    }
+    if head.starts_with(b"PK\x03\x04") {
+        return "application/zip";
+    }
+    if head.starts_with(&[0x1f, 0x8b]) {
+        return "application/gzip";
+    }
+    if head.starts_with(b"7z\xbc\xaf\x27\x1c") {
+        return "application/x-7z-compressed";
+    }
+    if head.starts_with(b"Rar!\x1a\x07") {
+        return "application/vnd.rar";
+    }
+    if head.starts_with(b"%PDF-") {
+        return "application/pdf";
+    }
+    if head.starts_with(b"BM") {
+        return "image/bmp";
+    }
+    if looks_like_svg(head) {
+        return "image/svg+xml";
+    }
+    "application/octet-stream"
+}
+
+fn looks_like_svg(head: &[u8]) -> bool {
+    let s = String::from_utf8_lossy(head).to_ascii_lowercase();
+    let t = s.trim_start().trim_start_matches('\u{feff}');
+    (t.starts_with("<?xml") || t.starts_with("<svg")) && s.contains("<svg")
 }
 
 /// Filesystem-backed data engine.
@@ -107,11 +180,39 @@ impl Data {
     /// Stream `reader` into a new temp file, hashing as we go.
     ///
     /// At most `limit` bytes are accepted; exceeding it fails with
-    /// `EntityTooLarge` and the partial temp file is removed.
-    pub async fn stage<R>(
+    /// `EntityTooLarge` and the partial temp file is removed. The first 512
+    /// bytes are sniffed so callers can default `Content-Type` without
+    /// buffering the upload.
+    ///
+    /// Security note: SigV4 signs a *declared* `x-amz-content-sha256`, not the
+    /// body. Callers that receive that header must use
+    /// [`Data::stage_verified`] so the bytes are bound to the signature.
+    pub async fn stage<R>(&self, reader: R, limit: Option<u64>) -> Result<StoredObject, S3Error>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        self.stage_impl(reader, limit, None).await
+    }
+
+    /// Like [`Data::stage`], but aborts as soon as the streamed SHA-256 differs
+    /// from `expected_sha256`.
+    pub async fn stage_verified<R>(
+        &self,
+        reader: R,
+        limit: Option<u64>,
+        expected_sha256: &str,
+    ) -> Result<StoredObject, S3Error>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        self.stage_impl(reader, limit, Some(expected_sha256)).await
+    }
+
+    async fn stage_impl<R>(
         &self,
         mut reader: R,
         limit: Option<u64>,
+        expected_sha256: Option<&str>,
     ) -> Result<StoredObject, S3Error>
     where
         R: tokio::io::AsyncRead + Unpin,
@@ -125,12 +226,15 @@ impl Data {
             .map_err(S3Error::internal)?;
         let mut w = BufWriter::with_capacity(256 * 1024, file);
         let mut size = 0u64;
+        let mut head = Vec::with_capacity(512);
+        let mut live = <sha2::Sha256 as sha2::Digest>::new();
         let mut buf = vec![0u8; 128 * 1024];
         loop {
             let n = match reader.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => n,
                 Err(e) => {
+                    drop(w);
                     let _ = tokio::fs::remove_file(&staged).await;
                     return Err(S3Error::internal(e));
                 }
@@ -141,6 +245,22 @@ impl Data {
                     drop(w);
                     let _ = tokio::fs::remove_file(&staged).await;
                     return Err(S3Error::too_large());
+                }
+            }
+            if head.len() < 512 {
+                let take = (512 - head.len()).min(n);
+                head.extend_from_slice(&buf[..take]);
+            }
+            if let Some(expected) = expected_sha256 {
+                sha2::Digest::update(&mut live, &buf[..n]);
+                if hex::encode(sha2::Digest::finalize(live.clone())) != expected {
+                    drop(w);
+                    let _ = tokio::fs::remove_file(&staged).await;
+                    return Err(S3Error::new(
+                        axum::http::StatusCode::BAD_REQUEST,
+                        "XAmzContentSHA256Mismatch",
+                        "The provided 'x-amz-content-sha256' header does not match what was computed.",
+                    ));
                 }
             }
             if let Err(e) = w.write_all(&buf[..n]).await {
@@ -160,7 +280,14 @@ impl Data {
         }
         drop(file);
         let (sha, md5) = hash_file(&staged).await.map_err(S3Error::internal)?;
-        Ok(StoredObject { size, sha256: sha, md5_hex: md5, staged })
+        let sniffed_content_type = sniff_content_type(&head);
+        Ok(StoredObject {
+            size,
+            sha256: sha,
+            md5_hex: md5,
+            staged,
+            sniffed_content_type,
+        })
     }
 
     /// Move a staged body to its final location, replacing any previous body.
@@ -465,6 +592,25 @@ mod tests {
     }
 
     #[test]
+    fn content_type_sniffing() {
+        assert_eq!(sniff_content_type(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0]), "image/png");
+        assert_eq!(sniff_content_type(&[0xFF, 0xD8, 0xFF, 0xE0]), "image/jpeg");
+        assert_eq!(sniff_content_type(b"GIF89a..."), "image/gif");
+        assert_eq!(sniff_content_type(b"%PDF-1.7"), "application/pdf");
+        assert_eq!(sniff_content_type(b"PK\x03\x04rest"), "application/zip");
+        assert_eq!(sniff_content_type(b"\x1f\x8b\x08"), "application/gzip");
+        assert_eq!(sniff_content_type(b"RIFF\0\0\0\0WEBPVP8 "), "image/webp");
+        assert_eq!(sniff_content_type(b"\0\0\0\x18ftypmp42"), "video/mp4");
+        assert_eq!(sniff_content_type(b"<?xml version=\"1.0\"?><svg xmlns=\"...\">"), "image/svg+xml");
+        // Text is deliberately not sniffed: an uploaded .html must stay
+        // generic so it can never be served as a script-bearing document by
+        // content sniffing.
+        assert_eq!(sniff_content_type(b"<html><body>hi</body></html>"), "application/octet-stream");
+        assert_eq!(sniff_content_type(b"hello world"), "application/octet-stream");
+        assert_eq!(sniff_content_type(b""), "application/octet-stream");
+    }
+
+    #[test]
     fn bucket_name_rules() {
         for good in ["abc", "my-bucket", "a.b.c", "logs-2026"] {
             assert!(validate_bucket_name(good).is_ok(), "{good}");
@@ -482,6 +628,8 @@ mod tests {
         assert!(validate_object_key(&"k".repeat(1025)).is_err());
     }
 }
+
+
 
 
 

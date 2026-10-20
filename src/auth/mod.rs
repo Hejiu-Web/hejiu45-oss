@@ -320,7 +320,7 @@ impl Authenticator {
 
         // Canonical request with presigned style: X-Amz-* params included,
         // signature absent.
-        let mut req = sigv4::SigV4Request {
+        let req = sigv4::SigV4Request {
             style: sigv4::AuthStyle::Presigned,
             access_key: access_key.to_string(),
             date: date.to_string(),
@@ -381,14 +381,7 @@ fn pct(s: &str) -> String {
     utf8_percent_encode(s, SET).to_string()
 }
 
-fn now_amz_date(now: i64) -> Result<String, S3Error> {
-    time::OffsetDateTime::from_unix_timestamp(now)
-        .map_err(|_| S3Error::internal("bad clock"))?
-        .format(&time::macros::format_description!(
-            "[year][month][day]T[hour][minute][second]Z"
-        ))
-        .map_err(|_| S3Error::internal("format"))
-}
+
 
 fn now_rfc3339_unix() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
@@ -605,6 +598,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+
 
 
 
