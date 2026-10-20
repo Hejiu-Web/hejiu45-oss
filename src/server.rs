@@ -1,4 +1,4 @@
-//! Router assembly, TLS termination, and graceful shutdown.
+﻿//! Router assembly, TLS termination, and graceful shutdown.
 //!
 //! ## Route ordering (the trap called out in the design notes)
 //!
@@ -26,8 +26,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/{bucket}/{*key}", any(crate::s3::object));
 
     Router::new()
-        .route("/api/health", get(crate::admin::health))
-        .route("/api/info", get(crate::admin::info))
+        .merge(crate::admin::router())
         .merge(s3_routes)
         .fallback(crate::web::static_handler)
         .layer(middleware::from_fn(capture_raw_path))
@@ -83,4 +82,5 @@ async fn shutdown_signal() {
 async fn serve_tls(router: Router, addr: std::net::SocketAddr, cert: &std::path::Path, key: &std::path::Path) -> anyhow::Result<()> {
     anyhow::bail!("TLS support is built in a later step of this build")
 }
+
 

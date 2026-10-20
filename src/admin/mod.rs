@@ -1,36 +1,44 @@
 //! Management API for the embedded console (`/api/*`).
 //!
-//! Authentication is deliberately separate from the S3 data plane: a cookie
-//! session here never grants object access, and an S3 credential never grants
-//! console access. See `docs/SECURITY.md`.
+//! Authentication here is a **cookie session**, entirely separate from the
+//! S3 data plane's SigV4. See [`session`] for the cookie policy and
+//! `docs/SECURITY.md` for the rationale.
 
-use axum::Json;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use serde_json::json;
+pub mod api;
+pub mod session;
+
+pub use api::*;
+
+use axum::Router;
+use axum::routing::{delete, get, patch, post, put};
 
 use crate::state::AppState;
 
-/// `GET /api/health` — public liveness probe.
-pub async fn health() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(json!({
-            "status": "ok",
-            "service": crate::config::PRODUCT,
-            "version": env!("CARGO_PKG_VERSION"),
-        })),
-    )
-}
-
-/// `GET /api/info` — public branding/behavior flags the login page needs.
-pub async fn info(axum::extract::State(st): axum::extract::State<AppState>) -> impl IntoResponse {
-    Json(json!({
-        "product": crate::config::PRODUCT,
-        "version": env!("CARGO_PKG_VERSION"),
-        "region": st.args.region,
-        "public_url": st.args.public_url,
-        "secure_cookies": st.args.secure_cookies(),
-        "tls_mode": format!("{:?}", st.args.tls).to_lowercase(),
-    }))
+/// Console API routes. Every handler except `health` / `info` / `login`
+/// requires a valid session; they enforce that themselves through
+/// [`session::require`].
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/api/health", get(api::health))
+        .route("/api/info", get(api::info))
+        .route("/api/auth/login", post(api::login))
+        .route("/api/auth/logout", post(api::logout))
+        .route("/api/auth/me", get(api::me))
+        .route("/api/auth/password", post(api::change_password))
+        .route("/api/overview", get(api::overview))
+        .route("/api/audit", get(api::audit_log))
+        .route("/api/buckets", get(api::list_buckets).post(api::create_bucket))
+        .route(
+            "/api/buckets/{name}",
+            patch(api::update_bucket).delete(api::delete_bucket),
+        )
+        .route("/api/buckets/{name}/objects", get(api::list_objects))
+        .route("/api/buckets/{name}/objects/presign", post(api::presign_object))
+        .route("/api/keys", get(api::list_keys).post(api::create_key))
+        .route(
+            "/api/keys/{id}",
+            delete(api::delete_key).patch(api::toggle_key),
+        )
+        .route("/api/keys/{id}/rotate", post(api::rotate_key))
+        .route("/api/keys/{id}/grants", put(api::set_grants))
 }
