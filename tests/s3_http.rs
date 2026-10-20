@@ -305,7 +305,13 @@ impl TestServer {
         stream.flush().await.expect("flush");
 
         let mut raw = Vec::new();
-        stream.read_to_end(&mut raw).await.expect("read");
+        // A hang here would look like a crash in CI (the harness kills the
+        // binary), so cap the wait and report what arrived.
+        match tokio::time::timeout(std::time::Duration::from_secs(20), stream.read_to_end(&mut raw)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => panic!("read failed: {e}"),
+            Err(_) => panic!("timed out waiting for a response"),
+        }
         parse_http(&raw)
     }
 }
@@ -377,7 +383,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bucket_and_object_lifecycle() {
     let srv = TestServer::start().await;
     let bucket = "lifecycle-bucket";
@@ -455,7 +461,7 @@ async fn bucket_and_object_lifecycle() {
     assert_eq!(st, 204);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn listing_with_prefix_delimiter_and_pagination() {
     let srv = TestServer::start().await;
     let bucket = "listing-bucket";
@@ -505,7 +511,7 @@ async fn listing_with_prefix_delimiter_and_pagination() {
     assert!(String::from_utf8_lossy(&body).contains("<CommonPrefixes>"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unicode_and_awkward_keys() {
     let srv = TestServer::start().await;
     let bucket = "keys-bucket";
@@ -538,7 +544,7 @@ async fn unicode_and_awkward_keys() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn content_type_is_sniffed_when_not_provided() {
     let srv = TestServer::start().await;
     let bucket = "sniff-bucket";
@@ -574,7 +580,7 @@ async fn content_type_is_sniffed_when_not_provided() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn security_negatives() {
     let srv = TestServer::start().await;
     let bucket = "security-bucket";
@@ -670,7 +676,7 @@ async fn security_negatives() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multipart_upload_roundtrip() {
     let srv = TestServer::start().await;
     let bucket = "multipart-bucket";
@@ -750,7 +756,7 @@ async fn multipart_upload_roundtrip() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn acl_enforcement_and_public_read() {
     let srv = TestServer::start().await;
 

@@ -49,10 +49,18 @@ jobs:
           cd frontend
           npm ci --no-audit --no-fund
           npm run build
-      # Includes tests/s3_http.rs: the real router on a loopback port, driven
-      # by an independent SigV4 signer (no shell or SDK required).
+      # Includes tests/s3_http.rs: the real router on a loopback port, driven by
+      # an independent SigV4 signer (no shell or SDK required).
       - name: Tests
         run: cargo test --locked
+      - name: Report the failing test, if any
+        if: failure()
+        shell: bash
+        run: |
+          echo "=== rerunning each target separately to isolate the failure ==="
+          cargo test --locked --lib -- --nocapture 2>&1 | tail -n 40 || true
+          echo "=== integration ==="
+          cargo test --locked --test s3_http -- --nocapture 2>&1 | tail -n 60 || true
       - name: Build the binary
         run: cargo build --locked
 
