@@ -116,12 +116,13 @@ jobs:
       - name: Lint the suite for Windows-only binaries
         run: |
           # PowerShell's `curl` alias hides curl.exe on Windows, but scripts that
-          # run on Linux must use the real `curl`.
-          if grep -n 'curl\.exe' scripts/e2e-awscli.ps1; then
-            echo "::error file=scripts/e2e-awscli.ps1::uses curl.exe, which does not exist on Linux"
+          # also run on Linux must invoke the real `curl`. Match only command
+          # invocations, so explanatory comments do not trip the check.
+          if grep -nE '&\s*"?curl\.exe|^\s*curl\.exe\s' scripts/e2e-awscli.ps1; then
+            echo "::error file=scripts/e2e-awscli.ps1::invokes curl.exe, which does not exist on Linux"
             exit 1
           fi
-          echo "no Windows-only binaries referenced"
+          echo "no Windows-only binaries invoked"
       - name: Run the AWS CLI suite
         shell: pwsh
         run: |
