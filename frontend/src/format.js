@@ -1,5 +1,7 @@
 // Formatting helpers shared by the views.
 
+import { t as t2 } from './i18n.js'
+
 export function bytes(n) {
   if (n === 0 || n == null) return '0 B'
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
@@ -13,10 +15,10 @@ export function ago(iso) {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return iso
   const s = Math.max(0, (Date.now() - t) / 1000)
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`
+  if (s < 60) return t2('time.justNow')
+  if (s < 3600) return t2('time.minutesAgo', { n: Math.floor(s / 60) })
+  if (s < 86400) return t2('time.hoursAgo', { n: Math.floor(s / 3600) })
+  if (s < 86400 * 30) return t2('time.daysAgo', { n: Math.floor(s / 86400) })
   return new Date(t).toISOString().slice(0, 10)
 }
 

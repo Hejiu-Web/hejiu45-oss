@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api, toast } from '../store.js'
 import { ago, copy } from '../format.js'
+import { t } from '../i18n.js'
 
 const keys = ref([])
 const buckets = ref([])
@@ -44,11 +45,11 @@ async function create() {
 }
 
 async function rotate(k) {
-  if (!confirm(`Rotate "${k.label}"? The old key stops working immediately.`)) return
+  if (!confirm(t('keys.confirmRotate', { label: k.label }))) return
   try {
     const r = await api.post(`/api/keys/${encodeURIComponent(k.access_key_id)}/rotate`)
     issued.value = r
-    toast('Key rotated; bucket grants migrated.', 'ok')
+    toast(t('keys.rotated'), 'ok')
     await load()
   } catch (e) {
     toast(e.message, 'error')
@@ -65,7 +66,7 @@ async function toggle(k) {
 }
 
 async function remove(k) {
-  if (!confirm(`Delete "${k.label}" and all of its grants?`)) return
+  if (!confirm(t('keys.confirmDelete', { label: k.label }))) return
   try {
     await api.del(`/api/keys/${encodeURIComponent(k.access_key_id)}`)
     await load()
@@ -89,7 +90,7 @@ async function saveGrants(k) {
     .map(([bucket, v]) => ({ bucket, read: v.read, write: v.write }))
   try {
     await api.put(`/api/keys/${encodeURIComponent(k.access_key_id)}/grants`, { grants })
-    toast('Grants saved.', 'ok')
+    toast(t('keys.grantsSaved'), 'ok')
     editing.value = null
     await load()
   } catch (e) {
@@ -98,12 +99,12 @@ async function saveGrants(k) {
 }
 
 async function doCopy(text) {
-  if (await copy(text)) toast('Copied.', 'ok')
-  else toast('Copy failed.', 'error')
+  if (await copy(text)) toast(t('keys.copied'), 'ok')
+  else toast(t('keys.copyFailed'), 'error')
 }
 
 const issuedTitle = computed(() =>
-  issued.value?.secret_access_key ? 'Store this secret now' : 'Action complete',
+  issued.value?.secret_access_key ? t('keys.storeSecret') : t('keys.actionComplete'),
 )
 
 onMounted(load)
@@ -112,39 +113,36 @@ onMounted(load)
 <template>
   <div class="page-head">
     <div>
-      <h1>Access keys</h1>
-      <p>
-        Credentials for the S3 data plane. Secrets are stored sealed with AES-256-GCM and are
-        shown exactly once.
-      </p>
+      <h1>{{ t('keys.title') }}</h1>
+      <p>{{ t('keys.subtitle') }}</p>
     </div>
   </div>
 
   <div v-if="error" class="alert error">{{ error }}</div>
 
   <div class="card">
-    <div class="card-head"><h2>Issue a key</h2></div>
+    <div class="card-head"><h2>{{ t('keys.issue') }}</h2></div>
     <form class="row" @submit.prevent="create">
-      <input v-model="newKey.label" placeholder="label, e.g. ci-deploy" style="max-width: 320px" required />
+      <input v-model="newKey.label" :placeholder="t('keys.labelPlaceholder')" style="max-width: 320px" required />
       <button class="primary" type="submit" :disabled="creating">
-        {{ creating ? 'Creating…' : 'Create key' }}
+        {{ creating ? t('keys.creating') : t('keys.create') }}
       </button>
     </form>
     <p class="hint">
-      A new key has no bucket access until you grant it below — least privilege by default.
+      {{ t('keys.issueHint') }}
     </p>
   </div>
 
   <div class="card">
-    <div v-if="loading" class="empty">Loading…</div>
+    <div v-if="loading" class="empty">{{ t('common.loading') }}</div>
     <table v-else-if="keys.length">
       <thead>
         <tr>
-          <th>Access key</th>
-          <th>Label</th>
-          <th>Status</th>
-          <th>Buckets</th>
-          <th>Last used</th>
+          <th>{{ t('keys.colKey') }}</th>
+          <th>{{ t('keys.colLabel') }}</th>
+          <th>{{ t('keys.colStatus') }}</th>
+          <th>{{ t('keys.colBuckets') }}</th>
+          <th>{{ t('keys.colLastUsed') }}</th>
           <th></th>
         </tr>
       </thead>
@@ -155,46 +153,46 @@ onMounted(load)
             <td>{{ k.label }}</td>
             <td>
               <span class="badge" :class="k.enabled ? 'ok' : 'danger'">
-                {{ k.enabled ? 'enabled' : 'disabled' }}
+                {{ k.enabled ? t('keys.enabled') : t('keys.disabled') }}
               </span>
             </td>
             <td>
               <div class="row" v-if="(k.grants || []).length">
                 <span v-for="g in k.grants" :key="g.bucket" class="badge">
-                  {{ g.bucket }} · {{ g.read ? 'R' : '' }}{{ g.write ? 'W' : '' }}
+                  {{ g.bucket }} · {{ g.read ? t('keys.read') : '' }}{{ g.write ? t('keys.write') : '' }}
                 </span>
               </div>
-              <span v-else class="muted">none</span>
+              <span v-else class="muted">{{ t('keys.none') }}</span>
             </td>
             <td class="muted">{{ ago(k.last_used_at) }}</td>
             <td class="row end">
-              <button class="small" @click="startEdit(k)">Grants</button>
-              <button class="small ghost" @click="toggle(k)">{{ k.enabled ? 'Disable' : 'Enable' }}</button>
-              <button class="small ghost" @click="rotate(k)">Rotate</button>
-              <button class="small danger" @click="remove(k)">Delete</button>
+              <button class="small" @click="startEdit(k)">{{ t('keys.grants') }}</button>
+              <button class="small ghost" @click="toggle(k)">{{ k.enabled ? t('keys.disable') : t('keys.enable') }}</button>
+              <button class="small ghost" @click="rotate(k)">{{ t('keys.rotate') }}</button>
+              <button class="small danger" @click="remove(k)">{{ t('keys.delete') }}</button>
             </td>
           </tr>
           <tr v-if="editing === k.access_key_id">
             <td colspan="6" style="background: var(--bg)">
               <div class="card" style="margin: 6px 0; background: var(--bg-elev-2)">
-                <h3 style="margin-bottom: 12px">Bucket grants for {{ k.label }}</h3>
+                <h3 style="margin-bottom: 12px">{{ t('keys.grantsFor', { label: k.label }) }}</h3>
                 <div v-if="buckets.length" class="grid cols-2">
                   <div v-for="b in buckets" :key="b.name" class="row">
                     <span class="mono" style="min-width: 150px">{{ b.name }}</span>
                     <label class="row" style="gap: 5px">
                       <input type="checkbox" v-model="draftGrants[b.name].read" style="width: auto" />
-                      read
+                      {{ t('keys.read') }}
                     </label>
                     <label class="row" style="gap: 5px">
                       <input type="checkbox" v-model="draftGrants[b.name].write" style="width: auto" />
-                      write
+                      {{ t('keys.write') }}
                     </label>
                   </div>
                 </div>
-                <div v-else class="muted">Create a bucket first.</div>
+                <div v-else class="muted">{{ t('keys.createBucketFirst') }}</div>
                 <div class="row end" style="margin-top: 14px">
-                  <button class="small ghost" @click="editing = null">Cancel</button>
-                  <button class="small primary" @click="saveGrants(k)">Save grants</button>
+                  <button class="small ghost" @click="editing = null">{{ t('keys.cancel') }}</button>
+                  <button class="small primary" @click="saveGrants(k)">{{ t('keys.saveGrants') }}</button>
                 </div>
               </div>
             </td>
@@ -202,28 +200,28 @@ onMounted(load)
         </template>
       </tbody>
     </table>
-    <div v-else class="empty">No access keys yet.</div>
+    <div v-else class="empty">{{ t('keys.empty') }}</div>
   </div>
 
   <div v-if="issued" class="modal-backdrop" @click.self="issued = null">
     <div class="modal">
       <h2 style="margin-bottom: 6px">{{ issuedTitle }}</h2>
       <p class="dim" style="margin-top: 0">
-        The secret is never shown again and cannot be recovered — only replaced (rotate).
+        {{ t('keys.secretOnce') }}
       </p>
       <label class="field">
-        <span>Access key ID</span>
+        <span>{{ t('keys.accessKeyId') }}</span>
         <input :value="issued.access_key_id" readonly class="mono" />
       </label>
       <label class="field">
-        <span>Secret access key</span>
+        <span>{{ t('keys.secretAccessKey') }}</span>
         <input :value="issued.secret_access_key" readonly class="mono" />
       </label>
       <div class="row end" style="margin-top: 8px">
         <button class="small ghost" @click="doCopy(`AWS_ACCESS_KEY_ID=${issued.access_key_id}\nAWS_SECRET_ACCESS_KEY=${issued.secret_access_key}`)">
-          Copy both
+          {{ t('keys.copyBoth') }}
         </button>
-        <button class="primary small" @click="issued = null">I have stored it</button>
+        <button class="primary small" @click="issued = null">{{ t('keys.stored') }}</button>
       </div>
     </div>
   </div>

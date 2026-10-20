@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { api, toast } from '../store.js'
 import { ago, bytes } from '../format.js'
+import { t } from '../i18n.js'
 
 const buckets = ref([])
 const keys = ref([])
@@ -29,7 +30,7 @@ async function create() {
   error.value = ''
   try {
     await api.post('/api/buckets', form.value)
-    toast(`Bucket "${form.value.name}" created.`, 'ok')
+    toast(t('buckets.created', { name: form.value.name }), 'ok')
     showCreate.value = false
     form.value = { name: '', visibility: 'private' }
     await load()
@@ -41,10 +42,10 @@ async function create() {
 }
 
 async function remove(b) {
-  if (!confirm(`Delete bucket "${b.name}"? This cannot be undone.`)) return
+  if (!confirm(t('buckets.confirmDelete', { name: b.name }))) return
   try {
     await api.del(`/api/buckets/${encodeURIComponent(b.name)}`)
-    toast(`Bucket "${b.name}" deleted.`, 'ok')
+    toast(t('buckets.deleted', { name: b.name }), 'ok')
     await load()
   } catch (e) {
     toast(e.message, 'error', 6000)
@@ -61,25 +62,25 @@ onMounted(load)
 <template>
   <div class="page-head">
     <div>
-      <h1>Buckets</h1>
-      <p>Every bucket starts private. Access keys only see the buckets they are granted.</p>
+      <h1>{{ t('buckets.title') }}</h1>
+      <p>{{ t('buckets.subtitle') }}</p>
     </div>
-    <button class="primary" @click="showCreate = true">New bucket</button>
+    <button class="primary" @click="showCreate = true">{{ t('buckets.new') }}</button>
   </div>
 
   <div v-if="error" class="alert error">{{ error }}</div>
 
   <div class="card">
-    <div v-if="loading" class="empty">Loading…</div>
+    <div v-if="loading" class="empty">{{ t('common.loading') }}</div>
     <table v-else-if="buckets.length">
       <thead>
         <tr>
-          <th>Bucket</th>
-          <th>Visibility</th>
-          <th class="num">Objects</th>
-          <th class="num">Size</th>
-          <th class="num">Keys</th>
-          <th>Created</th>
+          <th>{{ t('buckets.colBucket') }}</th>
+          <th>{{ t('buckets.colVisibility') }}</th>
+          <th class="num">{{ t('buckets.colObjects') }}</th>
+          <th class="num">{{ t('buckets.colSize') }}</th>
+          <th class="num">{{ t('buckets.colKeys') }}</th>
+          <th>{{ t('buckets.colCreated') }}</th>
           <th></th>
         </tr>
       </thead>
@@ -92,7 +93,7 @@ onMounted(load)
           </td>
           <td>
             <span class="badge" :class="b.visibility === 'public-read' ? 'warn' : 'ok'">
-              {{ b.visibility }}
+              {{ t('buckets.visibility.' + b.visibility) }}
             </span>
           </td>
           <td class="num">{{ b.object_count }}</td>
@@ -101,26 +102,26 @@ onMounted(load)
           <td class="muted">{{ ago(b.created_at) }}</td>
           <td class="row end">
             <router-link class="btn small" :to="`/buckets/${encodeURIComponent(b.name)}`">
-              Browse
+              {{ t('buckets.browse') }}
             </router-link>
-            <button class="small danger" @click="remove(b)">Delete</button>
+            <button class="small danger" @click="remove(b)">{{ t('buckets.delete') }}</button>
           </td>
         </tr>
       </tbody>
     </table>
     <div v-else class="empty">
-      No buckets yet.
+      {{ t('buckets.empty') }}
       <button class="small primary" style="margin-left: 8px" @click="showCreate = true">
-        Create the first one
+        {{ t('buckets.createFirst') }}
       </button>
     </div>
   </div>
 
   <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
     <form class="modal" @submit.prevent="create">
-      <h2 style="margin-bottom: 16px">New bucket</h2>
+      <h2 style="margin-bottom: 16px">{{ t('buckets.new') }}</h2>
       <label class="field">
-        <span>Name</span>
+        <span>{{ t('buckets.name') }}</span>
         <input
           v-model="form.name"
           placeholder="my-bucket"
@@ -129,21 +130,20 @@ onMounted(load)
           autofocus
         />
         <div class="hint">
-          3–63 characters: lowercase letters, digits, dots and hyphens. Must not look like
-          an IP address.
+          {{ t('buckets.nameHint') }}
         </div>
       </label>
       <label class="field">
-        <span>Visibility</span>
+        <span>{{ t('buckets.visibility') }}</span>
         <select v-model="form.visibility">
-          <option value="private">Private — all reads require a signed request (recommended)</option>
-          <option value="public-read">Public read — anonymous GET/HEAD allowed</option>
+          <option value="private">{{ t('buckets.private') }}</option>
+          <option value="public-read">{{ t('buckets.publicRead') }}</option>
         </select>
       </label>
       <div class="row end">
-        <button type="button" class="ghost" @click="showCreate = false">Cancel</button>
+        <button type="button" class="ghost" @click="showCreate = false">{{ t('buckets.cancel') }}</button>
         <button type="submit" class="primary" :disabled="creating">
-          {{ creating ? 'Creating…' : 'Create bucket' }}
+          {{ creating ? t('buckets.creating') : t('buckets.create') }}
         </button>
       </div>
     </form>

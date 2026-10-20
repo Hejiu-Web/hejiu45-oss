@@ -6,7 +6,8 @@
   "description": "Embedded admin console for hejiu45-oss (Vue 3, plain JavaScript)",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/check-i18n.mjs && vite build",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

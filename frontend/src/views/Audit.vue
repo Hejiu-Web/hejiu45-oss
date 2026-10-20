@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { api } from '../store.js'
 import { dateTime } from '../format.js'
+import { t } from '../i18n.js'
 
 const entries = ref([])
 const error = ref('')
@@ -28,24 +29,24 @@ function kind(action) {
 <template>
   <div class="page-head">
     <div>
-      <h1>Audit log</h1>
-      <p>Newest first, capped at the most recent 200 events. Stored in the metadata database.</p>
+      <h1>{{ t('audit.title') }}</h1>
+      <p>{{ t('audit.subtitle') }}</p>
     </div>
   </div>
 
   <div v-if="error" class="alert error">{{ error }}</div>
 
   <div class="card">
-    <div v-if="loading" class="empty">Loading…</div>
+    <div v-if="loading" class="empty">{{ t('common.loading') }}</div>
     <table v-else-if="entries.length">
       <thead>
         <tr>
-          <th>Time (UTC)</th>
-          <th>Actor</th>
-          <th>Action</th>
-          <th>Target</th>
-          <th>Detail</th>
-          <th>Client</th>
+          <th>{{ t('audit.colTime') }}</th>
+          <th>{{ t('audit.colActor') }}</th>
+          <th>{{ t('audit.colAction') }}</th>
+          <th>{{ t('audit.colTarget') }}</th>
+          <th>{{ t('audit.colDetail') }}</th>
+          <th>{{ t('audit.colClient') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -59,6 +60,6 @@ function kind(action) {
         </tr>
       </tbody>
     </table>
-    <div v-else class="empty">No events recorded.</div>
+    <div v-else class="empty">{{ t('audit.empty') }}</div>
   </div>
 </template>

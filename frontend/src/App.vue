@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, state } from './store.js'
+import { LOCALES, locale, setLocale, t } from './i18n.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,17 +30,32 @@ async function signOut() {
         </div>
       </div>
 
-      <router-link class="nav-link" to="/">Overview</router-link>
-      <router-link class="nav-link" to="/buckets">Buckets</router-link>
-      <router-link class="nav-link" to="/keys">Access keys</router-link>
-      <router-link class="nav-link" to="/audit">Audit log</router-link>
-      <router-link class="nav-link" to="/settings">Settings</router-link>
+      <router-link class="nav-link" to="/">{{ t('nav.overview') }}</router-link>
+      <router-link class="nav-link" to="/buckets">{{ t('nav.buckets') }}</router-link>
+      <router-link class="nav-link" to="/keys">{{ t('nav.keys') }}</router-link>
+      <router-link class="nav-link" to="/audit">{{ t('nav.audit') }}</router-link>
+      <router-link class="nav-link" to="/settings">{{ t('nav.settings') }}</router-link>
 
       <div class="nav-spacer"></div>
-      <div class="dim" style="padding: 8px 10px; font-size: 12px">
-        signed in as <strong>{{ state.user?.username }}</strong>
+
+      <div class="lang-switch" role="group" :aria-label="t('lang.switch')">
+        <button
+          v-for="l in LOCALES"
+          :key="l.code"
+          class="lang-btn"
+          :class="{ active: locale === l.code }"
+          type="button"
+          :aria-pressed="locale === l.code"
+          @click="setLocale(l.code)"
+        >
+          {{ l.short }}
+        </button>
       </div>
-      <button class="ghost" @click="signOut">Sign out</button>
+
+      <div class="dim" style="padding: 8px 10px; font-size: 12px">
+        {{ t('app.signedInAs') }} <strong>{{ state.user?.username }}</strong>
+      </div>
+      <button class="ghost" @click="signOut">{{ t('app.signOut') }}</button>
     </aside>
 
     <main class="main">
@@ -48,8 +64,8 @@ async function signOut() {
   </div>
 
   <div class="toast-host">
-    <div v-for="t in state.toasts" :key="t.id" class="toast" :class="t.kind">
-      {{ t.message }}
+    <div v-for="tst in state.toasts" :key="tst.id" class="toast" :class="tst.kind">
+      {{ tst.message }}
     </div>
   </div>
 </template>

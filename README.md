@@ -2,7 +2,7 @@
 
 # hejiu45-oss
 
-**单二进制、S3 兼容的对象存储服务，控制台内嵌。**
+**单二进制、S3 兼容的对象存储服务，控制台内嵌，中英双语。**
 
 一个约 6 MB 的可执行文件。无数据库、无 Redis、无运行时依赖。
 用 SigV4 认证，用浏览器管理。
@@ -17,6 +17,13 @@
 </div>
 
 ![Console overview](docs/screenshots/overview.png)
+
+<details>
+<summary>中文界面 / Chinese UI</summary>
+
+![Console overview (中文)](docs/screenshots/overview.zh.png)
+
+</details>
 
 ---
 
@@ -53,6 +60,7 @@ MinIO 证明了这个模式，随后又背离了它。`hejiu45-oss` 是同一思
 | :-- | :-- |
 | **部署** | 单二进制。没有 Java、Python 或外部数据库。 |
 | **控制台** | 编译进二进制——不存在需要单独托管的静态资源目录。 |
+| **界面语言** | **中英双语**，右上角/侧栏一键切换，首次访问跟随浏览器语言，选择持久化。 |
 | **S3 密钥** | Secret **信封加密**（HKDF 派生主密钥 + AES-256-GCM）后落库；数据库文件泄露也得不到可用密钥。 |
 | **控制台会话** | 服务端会话、不透明 ID、`HttpOnly; Secure; SameSite=Strict`、可即时吊销。 |
 | **默认最小权限** | 新访问密钥**默认无法访问任何桶**，必须逐桶授权，读与写分别控制。 |
@@ -183,6 +191,33 @@ cargo build --release
 > 没先构建前端时会嵌入一个占位页（并打印醒目警告），二进制能跑但控制台不可用。
 
 浏览器打开 <http://127.0.0.1:9000> 登录。首次启动生成的密码只会打印一次。
+
+### 控制台界面（中 / English）
+
+控制台**内置中英双语**，无需任何额外依赖或语言包：
+
+- **切换位置**：登录页在**右上角**；登录后在**左侧栏底部**（`EN | 中` 分段按钮）。
+- **首次访问**跟随浏览器语言（`zh-*` → 中文，其余 → 英文）。
+- **选择会记住**：存在 `localStorage` 的 `hj45.locale`，刷新、重启浏览器都保持。
+- **完整覆盖**：导航、表格、按钮、提示、确认框、空状态、相对时间
+  （"3 分钟前" / "3m ago"）、`<html lang>` 属性都会同步切换。
+- 语言切换是**纯前端**行为，不会改变服务端的日志与审计记录（审计动作名保持英文，
+  便于检索）。
+
+截图（English / 中文）：
+
+| | English | 中文 |
+| :-- | :-- | :-- |
+| 登录 | ![login](docs/screenshots/login.png) | ![login 中文](docs/screenshots/login.zh.png) |
+| 存储桶 | ![buckets](docs/screenshots/buckets.png) | ![buckets 中文](docs/screenshots/buckets.zh.png) |
+| 访问密钥 | ![keys](docs/screenshots/keys.png) | ![keys 中文](docs/screenshots/keys.zh.png) |
+| 桶详情 | ![bucket detail](docs/screenshots/bucket-detail.png) | ![bucket detail 中文](docs/screenshots/bucket-detail.zh.png) |
+| 审计日志 | ![audit](docs/screenshots/audit.png) | ![audit 中文](docs/screenshots/audit.zh.png) |
+| 设置 | ![settings](docs/screenshots/settings.png) | ![settings 中文](docs/screenshots/settings.zh.png) |
+
+新增语言只需在 `frontend/src/i18n.js` 的 `messages` 里加一份文案；
+`npm run check:i18n` 会校验各语言键集合一致、且代码中引用的键都存在，
+该检查已挂在 `npm run build` 之前，漏翻会**直接构建失败**。
 
 ### 客户端接入
 
@@ -353,6 +388,7 @@ auditable implementation of the same idea with deliberate differences:
 | :-- | :-- |
 | **Deployment** | One binary. No Java, no Python, no external database. |
 | **Console** | Compiled into the binary — nothing to serve from disk. |
+| **Languages** | **Bilingual (English / 中文)**, one click to switch; follows the browser on first visit and remembers the choice. |
 | **S3 credentials** | Secrets are **envelope-encrypted** (AES-256-GCM under an HKDF-derived master key). A stolen database file yields no usable keys. |
 | **Console sessions** | Server-side, opaque IDs, `HttpOnly; Secure; SameSite=Strict`, instant revocation. |
 | **Least privilege** | A new access key can reach **nothing** until granted specific buckets, with read and write tracked separately. |
@@ -468,6 +504,32 @@ irm https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-windows
 
 The script verifies the download, tightens the data-directory ACL and registers
 a WinSW-backed service (`-Mode task` uses a scheduled task instead).
+
+### Console language (English / 中文)
+
+The console ships **bilingual** — no separate language pack, no extra request:
+
+- **Where to switch**: top-right on the login page; bottom of the sidebar once
+  signed in (an `EN | 中` segmented control).
+- **First visit** follows the browser (`zh-*` → Chinese, everything else →
+  English).
+- **The choice sticks**: stored in `localStorage` under `hj45.locale`, so it
+  survives reloads and restarts.
+- **Fully covered**: navigation, tables, buttons, hints, confirm dialogs, empty
+  states, relative times ("3m ago" / "3 分钟前") and the `<html lang>` attribute.
+- Switching is **client-side only**; server logs and audit actions stay in
+  English so they remain greppable.
+
+| | English | 中文 |
+| :-- | :-- | :-- |
+| Login | ![login](docs/screenshots/login.png) | ![login zh](docs/screenshots/login.zh.png) |
+| Buckets | ![buckets](docs/screenshots/buckets.png) | ![buckets zh](docs/screenshots/buckets.zh.png) |
+| Bucket detail | ![bucket detail](docs/screenshots/bucket-detail.png) | ![bucket detail zh](docs/screenshots/bucket-detail.zh.png) |
+
+Adding a language means adding one entry to `messages` in
+`frontend/src/i18n.js`. `npm run check:i18n` verifies that every language has
+the same keys and that every key referenced in the source exists; it runs as
+part of `npm run build`, so a missing translation fails the build.
 
 ### Connect a client
 

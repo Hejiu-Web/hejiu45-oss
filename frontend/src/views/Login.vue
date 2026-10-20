@@ -1,7 +1,8 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, state } from '../store.js'
+import { LOCALES, locale, setLocale, t } from '../i18n.js'
 
 // location is not exposed to templates; capture it explicitly.
 const origin = window.location.origin
@@ -13,6 +14,8 @@ const password = ref('')
 const busy = ref(false)
 const error = ref('')
 
+const serverLabel = computed(() => state.info?.public_url || origin)
+
 async function submit() {
   if (busy.value) return
   busy.value = true
@@ -22,7 +25,7 @@ async function submit() {
     password.value = ''
     router.push(route.query.next || '/')
   } catch (e) {
-    error.value = e.message || 'Login failed'
+    error.value = e.message || t('login.failed')
   } finally {
     busy.value = false
   }
@@ -30,23 +33,37 @@ async function submit() {
 </script>
 
 <template>
+  <div class="login-lang">
+    <button
+      v-for="l in LOCALES"
+      :key="l.code"
+      class="lang-btn"
+      :class="{ active: locale === l.code }"
+      type="button"
+      :aria-pressed="locale === l.code"
+      @click="setLocale(l.code)"
+    >
+      {{ l.label }}
+    </button>
+  </div>
+
   <form class="login-card" @submit.prevent="submit">
     <div class="brand">
       <div class="brand-mark">HJ</div>
       <div>
         <div class="brand-name">hejiu45-oss</div>
-        <div class="brand-ver">object storage console</div>
+        <div class="brand-ver">{{ t('app.tagline') }}</div>
       </div>
     </div>
 
     <div v-if="error" class="alert error">{{ error }}</div>
 
     <label class="field">
-      <span>Username</span>
+      <span>{{ t('login.username') }}</span>
       <input v-model="username" autocomplete="username" required />
     </label>
     <label class="field">
-      <span>Password</span>
+      <span>{{ t('login.password') }}</span>
       <input
         v-model="password"
         type="password"
@@ -57,19 +74,16 @@ async function submit() {
     </label>
 
     <button class="primary" style="width: 100%; justify-content: center" :disabled="busy">
-      {{ busy ? 'Signing in…' : 'Sign in' }}
+      {{ busy ? t('login.submitting') : t('login.submit') }}
     </button>
 
     <p v-if="state.info && !state.info.secure_cookies" class="alert warn" style="margin-top: 16px">
-      This connection is not marked secure, so the session cookie is sent without the
-      <code>Secure</code> attribute. Put the console behind HTTPS before using it over a
-      network.
+      {{ t('login.insecure') }}
     </p>
     <p class="hint" style="margin-top: 14px">
-      Region <span class="mono">{{ state.info?.region || 'us-east-1' }}</span>
+      {{ t('login.region') }} <span class="mono">{{ state.info?.region || 'us-east-1' }}</span>
       &middot; server
-      <span class="mono">{{ state.info?.public_url || origin }}</span>
+      <span class="mono">{{ serverLabel }}</span>
     </p>
   </form>
 </template>
-
