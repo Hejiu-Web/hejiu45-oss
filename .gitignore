@@ -1,0 +1,16 @@
+﻿/target
+/frontend/node_modules
+/frontend/dist
+/frontend/.vite
+/data
+/tmp-smoke
+*.redb
+*.redb-shm
+*.redb-wal
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+/tmp
