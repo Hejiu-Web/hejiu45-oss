@@ -33,7 +33,7 @@ while `cargo run` serves the API.
 ## Testing
 
 ```bash
-cargo test --lib                 # unit tests, including AWS SigV4 vectors
+cargo test                       # unit tests + HTTP integration tests (real router)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
@@ -94,4 +94,5 @@ rather than adding a test that only proves the happy path.
    (amd64/arm64) and Windows binaries, writes `checksums-hejiu45-oss.txt`, and
    publishes the release.
 4. Installers pick up `releases/latest/download/...` automatically.
+
 

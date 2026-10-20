@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -20,7 +20,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Build the console (needed for rust-embed)
+      # rust-embed reads frontend/dist at compile time, so the console must be
+      # built before any cargo command.
+      - name: Build the console
         run: |
           cd frontend
           npm ci --no-audit --no-fund
@@ -44,15 +46,18 @@ jobs:
           cd frontend
           npm ci --no-audit --no-fund
           npm run build
-      - name: Unit tests
-        run: cargo test --locked --lib --all-features
+      # Includes tests/s3_http.rs: the real router on a loopback port, driven
+      # by an independent SigV4 signer (no shell or SDK required).
+      - name: Tests
+        run: cargo test --locked
       - name: Build the binary
         run: cargo build --locked
 
-  # End-to-end: run the server and exercise the S3 API with real SigV4
-  # signatures, including the security-critical negative cases.
-  e2e:
-    name: S3 end-to-end
+  # Compatibility with the official AWS CLI, which signs with its own SDK and
+  # streams bodies as `aws-chunked`. This is what caught the multipart framing
+  # and concurrent-part bugs, so it stays in CI.
+  awscli:
+    name: AWS CLI compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,36 +66,38 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install AWS CLI
+        run: |
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          sudo /tmp/aws/install
+          aws --version
       - name: Build
         run: |
           cd frontend && npm ci --no-audit --no-fund && npm run build && cd ..
           cargo build --release --locked
-      - name: Run the server
+      - name: Provision an access key
         run: |
           ./target/release/hejiu45-oss \
+            --data-dir "$RUNNER_TEMP/data" \
+            --init-access-key ci-awscli > "$RUNNER_TEMP/provision.log" 2>&1
+          echo "AWS_ACCESS_KEY_ID=$(grep '^access_key_id:' "$RUNNER_TEMP/provision.log" | awk '{print $2}')" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$(grep '^secret_access_key:' "$RUNNER_TEMP/provision.log" | awk '{print $2}')" >> "$GITHUB_ENV"
+      - name: Start the server
+        run: |
+          nohup ./target/release/hejiu45-oss \
             --data-dir "$RUNNER_TEMP/data" \
             --listen 127.0.0.1:9000 \
             --allow-insecure \
-            --admin-password "ci-password-123456" \
-            --init-access-key ci-e2e > "$RUNNER_TEMP/server.log" 2>&1 &
-          sleep 3
-          curl -fsS http://127.0.0.1:9000/healthz
-      - name: Extract credentials
-        run: |
-          AK=$(grep 'access_key_id:' "$RUNNER_TEMP/server.log" | awk '{print $2}')
-          SK=$(grep 'secret_access_key:' "$RUNNER_TEMP/server.log" | awk '{print $2}')
-          echo "HEJIU45_OSS_AK=$AK" >> "$GITHUB_ENV"
-          echo "HEJIU45_OSS_SK=$SK" >> "$GITHUB_ENV"
-      - name: Provision the access key
-        run: |
-          # `--init-access-key` exits after provisioning; restart in serving mode.
-          kill %1 2>/dev/null || true
-          sleep 1
-          ./target/release/hejiu45-oss \
-            --data-dir "$RUNNER_TEMP/data" \
-            --listen 127.0.0.1:9000 \
-            --allow-insecure > "$RUNNER_TEMP/serve.log" 2>&1 &
-          sleep 3
-      - name: Run e2e (PowerShell)
+            --public-url http://127.0.0.1:9000 \
+            > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/healthz; then exit 0; fi
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/server.log" >&2
+          exit 1
+      - name: Run the AWS CLI suite
         shell: pwsh
-        run: ./scripts/e2e-s3.ps1 -Base http://127.0.0.1:9000 -AccessKey $env:HEJIU45_OSS_AK -SecretKey $env:HEJIU45_OSS_SK
+        run: ./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3
+

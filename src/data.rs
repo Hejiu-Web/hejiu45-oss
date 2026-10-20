@@ -253,22 +253,28 @@ impl Data {
                 let take = (512 - head.len()).min(n);
                 head.extend_from_slice(&buf[..take]);
             }
-            if let Some(expected) = expected_sha256 {
+            if expected_sha256.is_some() {
                 sha2::Digest::update(&mut live, &buf[..n]);
-                if hex::encode(sha2::Digest::finalize(live.clone())) != expected {
-                    drop(w);
-                    let _ = tokio::fs::remove_file(&staged).await;
-                    return Err(S3Error::new(
-                        axum::http::StatusCode::BAD_REQUEST,
-                        "XAmzContentSHA256Mismatch",
-                        "The provided 'x-amz-content-sha256' header does not match what was computed.",
-                    ));
-                }
             }
             if let Err(e) = w.write_all(&buf[..n]).await {
                 drop(w);
                 let _ = tokio::fs::remove_file(&staged).await;
                 return Err(S3Error::internal(e));
+            }
+        }
+        // Compare the *complete* body hash: the declared `x-amz-content-sha256`
+        // covers the whole payload, so a per-chunk comparison can only ever
+        // match a single-chunk upload.
+        if let Some(expected) = expected_sha256 {
+            let digest = hex::encode(sha2::Digest::finalize(live));
+            if digest != expected {
+                drop(w);
+                let _ = tokio::fs::remove_file(&staged).await;
+                return Err(S3Error::new(
+                    axum::http::StatusCode::BAD_REQUEST,
+                    "XAmzContentSHA256Mismatch",
+                    "The provided 'x-amz-content-sha256' header does not match what was computed.",
+                ));
             }
         }
         if let Err(e) = w.flush().await {

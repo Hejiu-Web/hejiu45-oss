@@ -104,17 +104,19 @@ impl Authenticator {
     }
 
     /// Full verification for one request.
-    pub fn verify(&self, ctx: &AuthContext<'_>) -> Result<Principal, S3Error> {
+    ///
+    /// Returns Ok(None) for a request that carries **no** credential at all:
+    /// the operation decides whether anonymous access is acceptable (only
+    /// GetObject/HeadObject on a public-read bucket). A request that
+    /// *does* carry credentials is always verified, and any failure is an
+    /// error.
+    pub fn verify(&self, ctx: &AuthContext<'_>) -> Result<Option<Principal>, S3Error> {
         let pairs = sigv4::parse_query_pairs(ctx.raw_query);
         let query = sigv4::AuthQuery::parse(&pairs);
         // Header auth: the payload hash travels in a header, not the query.
         let parsed = match sigv4::parse(ctx.headers, &query)? {
             Some(p) => p,
-            None => {
-                // Last chance for anonymous GET on a public-read bucket is
-                // decided by the caller; here anonymous means "no proof".
-                return Err(S3Error::missing_signature());
-            }
+            None => return Ok(None),
         };
         let (rec, secret) = self.lookup(&parsed.access_key)?;
 
@@ -168,11 +170,11 @@ impl Authenticator {
             }
         }
         self.touch(rec.clone());
-        Ok(Principal {
+        Ok(Some(Principal {
             access_key: rec.access_key_id,
             label: rec.label,
             style: parsed.style,
-        })
+        }))
     }
 
     /// ACL check. Returns `Ok(())` when `principal` may `need` `bucket`.

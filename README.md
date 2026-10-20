@@ -232,10 +232,15 @@ hejiu45-oss --data-dir /var/lib/hejiu45-oss --init-access-key ci --init-bucket a
 ### 测试
 
 ```bash
-cargo test --lib                                         # 63 个单元测试（含 AWS SigV4 向量）
-./scripts/e2e-s3.ps1    -Base http://127.0.0.1:9000      # 23 项手写 SigV4 端到端检查
+cargo test                                   # 63 个单元测试 + 7 个 HTTP 集成测试
 ./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3   # 21 项真实 AWS CLI 检查
+./scripts/e2e-s3.ps1    -Base http://127.0.0.1:9000           # 23 项（PowerShell，手写签名）
 ```
+
+`tests/s3_http.rs` 会在回环端口启动**真实路由**，用一份**独立实现**的 SigV4
+签名器发请求，因此路由、中间件、验签、存储全链路都能在任意平台上用
+`cargo test` 覆盖。AWS CLI 套件单独存在，因为它验证的是与真实 SDK 的兼容性——
+`aws-chunked` 分块与并发分片这两个 bug 正是它发现的。
 
 端到端脚本用真实 SigV4 签名发起请求，并覆盖关键的反向用例：
 未签名请求、篡改签名、`x-amz-content-sha256` 不匹配、region 错误。
@@ -402,10 +407,16 @@ hejiu45-oss --data-dir DIR --init-access-key ci --init-bucket artifacts
 ### Testing
 
 ```bash
-cargo test --lib                                      # 63 unit tests incl. AWS SigV4 vectors
-./scripts/e2e-s3.ps1    -Base http://127.0.0.1:9000   # 23 checks, hand-signed SigV4
-./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3   # 21 checks with the real AWS CLI
+cargo test                                   # 63 unit + 7 HTTP integration tests
+./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3   # 21 checks, real AWS CLI
+./scripts/e2e-s3.ps1    -Base http://127.0.0.1:9000           # 23 checks (PowerShell, hand-signed)
 ```
+
+`tests/s3_http.rs` starts the real router on a loopback port and signs requests
+with an **independent** SigV4 implementation, so routing, middleware,
+verification and storage are all exercised on every platform by `cargo test`.
+The AWS CLI suite stays separate because it proves compatibility with a real
+SDK — it is what caught the `aws-chunked` framing and concurrent-part bugs.
 
 The e2e script signs real SigV4 requests and covers the negative cases that
 matter: unsigned requests, tampered signatures, a mismatched
@@ -424,4 +435,5 @@ frontend/       Vue 3 (plain JS) deploy/      Nginx / Caddy configs
 ### License
 
 MIT. See [LICENSE](LICENSE).
+
 

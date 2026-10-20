@@ -1,4 +1,4 @@
-﻿//! `aws-chunked` request body decoding.
+//! `aws-chunked` request body decoding.
 //!
 //! AWS SDKs that stream a body (every multipart part upload, and any PUT using
 //! `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`) frame it like this:
@@ -50,7 +50,6 @@ impl BodyEncoding {
         }
     }
 }
-
 
 /// Sequential reader over an `aws-chunked` body.
 ///
@@ -312,4 +311,3 @@ mod tests {
         assert_eq!(BodyEncoding::detect(None, None), BodyEncoding::Identity);
     }
 }
-

@@ -83,7 +83,7 @@ async fn put_object(
     req: Request,
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
 
     if let Some(copy_source) = req
         .headers()
@@ -257,7 +257,7 @@ async fn get_object(
     // Public-read buckets allow anonymous GET/HEAD; everything else needs the
     // key to hold read permission.
     if !b.is_public_read() {
-        st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
+        st.auth.authorize(s3.principal()?, &b, BucketPerms::READ)?;
     }
     let meta = load_object(st, bucket, key)?;
     let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
@@ -332,7 +332,7 @@ fn head_object(
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
     if !b.is_public_read() {
-        st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
+        st.auth.authorize(s3.principal()?, &b, BucketPerms::READ)?;
     }
     let meta = load_object(st, bucket, key)?;
     let mut res = Response::new(Body::empty());
@@ -353,7 +353,7 @@ async fn delete_object(
     key: &str,
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     // S3 DELETE is idempotent: deleting a missing key is a success.
     delete_single_object(st, bucket, key).await?;
     let mut res = Response::new(Body::empty());
@@ -370,9 +370,11 @@ async fn copy_object(
 ) -> Result<Response, S3Error> {
     let (src_bucket, src_key) = parse_copy_source(copy_source)?;
     let src = load_bucket(st, src_bucket)?;
-    st.auth.authorize(&s3.principal, &src, BucketPerms::READ)?;
+    st.auth
+        .authorize(s3.principal()?, &src, BucketPerms::READ)?;
     let dst = load_bucket(st, dest_bucket)?;
-    st.auth.authorize(&s3.principal, &dst, BucketPerms::WRITE)?;
+    st.auth
+        .authorize(s3.principal()?, &dst, BucketPerms::WRITE)?;
     let src_meta = load_object(st, src_bucket, src_key)?;
 
     let mut data = Vec::new();
@@ -473,7 +475,7 @@ async fn create_multipart_object(
     key: &str,
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let upload_id = format!("{}{}", uuid::Uuid::new_v4().simple(), st.started_unix);
     let record = MultipartUpload {
         upload_id: upload_id.clone(),
@@ -535,7 +537,7 @@ async fn upload_part(
         ));
     }
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let _up = load_upload(st, bucket, key, &upload_id)?;
 
     let stream = req
@@ -627,7 +629,7 @@ async fn complete_multipart(
         .ok_or_else(|| S3Error::invalid_argument("uploadId", ""))?
         .to_string();
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let up = load_upload(st, bucket, key, &upload_id)?;
 
     let body = axum::body::to_bytes(req.into_body(), 1024 * 1024)
@@ -753,7 +755,7 @@ async fn abort_multipart(
         .ok_or_else(|| S3Error::invalid_argument("uploadId", ""))?
         .to_string();
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let _ = load_upload(st, bucket, key, &upload_id)?;
     let _ = st
         .meta
@@ -770,7 +772,7 @@ fn list_multipart_uploads(
     bucket: &str,
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::READ)?;
     let uploads: Vec<MultipartUpload> = st
         .meta
         .scan_json(MULTIPARTS, Some(&format!("{bucket}\u{0}")), 10_000)

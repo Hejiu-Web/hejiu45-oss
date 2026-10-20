@@ -268,6 +268,14 @@ fn parse_presigned(q: &AuthQuery, headers: &HeaderMap) -> Result<SigV4Request, S
     })
 }
 
+/// Whether the request carries *any* credential material.
+///
+/// Anonymous requests are legal for `public-read` buckets, so the caller needs
+/// to distinguish "signed" from "anonymous" before deciding what to do.
+pub fn has_credentials(headers: &HeaderMap, query: &AuthQuery) -> bool {
+    headers.contains_key(axum::http::header::AUTHORIZATION) || query.is_presigned()
+}
+
 /// Determine the authentication style and parse credentials.
 ///
 /// A request carrying both an `Authorization` header and presigned query

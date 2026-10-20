@@ -127,7 +127,9 @@ Bucket.perms: { access_key_id → { read: bool, write: bool } }
   `ListBuckets` only shows granted buckets (a listing is information too),
   `GetObject` requires `read`, `PutObject` requires `write`.
 - `public-read` buckets allow anonymous `GET`/`HEAD` only; anonymous access is
-  never possible for writes or listings.
+  never possible for writes or listings. Anonymity is decided at the operation
+  (the verifier returns "no principal" rather than an error), so an anonymous
+  request can never reach an operation that requires a caller.
 - Rotating a key **migrates its grants** to the new key, so rotation is not a
   silent outage. Deleting a key removes its grants from every bucket.
 
@@ -222,4 +224,5 @@ Credit will be given unless you ask otherwise.
 - [ ] `--public-url` matches the URL users and SDKs actually use (presigned URLs
       are host-bound).
 - [ ] The data directory is not world-readable.
+
 

@@ -39,7 +39,8 @@ pub struct S3Request {
     pub query: S3Query,
     pub raw_path: String,
     pub raw_query: String,
-    pub principal: Principal,
+    /// None for an anonymous request (no credential at all).
+    pub principal: Option<Principal>,
 }
 
 impl S3Request {
@@ -82,6 +83,16 @@ impl S3Request {
         })
     }
 
+    /// The verified caller, or an error for an operation that needs one.
+    ///
+    /// Only `GetObject`/`HeadObject` accept anonymous access (and only on a
+    /// `public-read` bucket); every other operation calls this.
+    pub fn principal(&self) -> Result<&Principal, S3Error> {
+        self.principal
+            .as_ref()
+            .ok_or_else(S3Error::missing_signature)
+    }
+
     /// How this request's body is framed (`aws-chunked` for SDK streaming
     /// uploads, plain bytes otherwise).
     pub fn body_encoding(&self) -> crate::s3::chunked::BodyEncoding {
@@ -111,7 +122,13 @@ impl S3Request {
             .headers
             .get("x-amz-content-sha256")
             .and_then(|v| v.to_str().ok())?;
-        if payload_hash_is_literal(h) || self.principal.style == AuthStyle::Presigned {
+        // Presigned URLs never carry a body, so `UNSIGNED-PAYLOAD` is all they
+        // can use.
+        let presigned = matches!(
+            self.principal.as_ref().map(|p| p.style),
+            Some(AuthStyle::Presigned)
+        );
+        if payload_hash_is_literal(h) || presigned {
             None
         } else if h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()) {
             Some(h)
@@ -197,6 +214,10 @@ pub async fn list_buckets(State(st): State<AppState>, req: Request) -> Response 
         Ok(r) => r,
         Err(e) => return e.into_response(),
     };
+    let principal = match s3.principal() {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
     let all: Vec<BucketMeta> = st
         .meta
         .scan_json(BUCKETS, None, 10_000)
@@ -210,7 +231,7 @@ pub async fn list_buckets(State(st): State<AppState>, req: Request) -> Response 
         .iter()
         .filter(|b| {
             b.perms
-                .get(&s3.principal.access_key)
+                .get(&principal.access_key)
                 .map(BucketPerms::can_read)
                 .unwrap_or(false)
         })
@@ -218,8 +239,8 @@ pub async fn list_buckets(State(st): State<AppState>, req: Request) -> Response 
     let mut inner = String::new();
     inner.push_str(&format!(
         "<Owner><ID>{}</ID><DisplayName>{}</DisplayName></Owner><Buckets>",
-        xml_escape(&s3.principal.access_key),
-        xml_escape(&s3.principal.label)
+        xml_escape(&principal.access_key),
+        xml_escape(&principal.label)
     ));
     for b in visible {
         inner.push_str(&format!(
@@ -273,7 +294,7 @@ async fn bucket_and_body(
         (Method::GET, None) if s3.query.is_list_v2() => list_objects_v2(st, &s3, bucket),
         (Method::GET, Some("location")) => {
             let b = load_bucket(st, bucket)?;
-            st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
+            st.auth.authorize(s3.principal()?, &b, BucketPerms::READ)?;
             let inner = format!(
                 "<LocationConstraint>{}</LocationConstraint>",
                 xml_escape(st.region())
@@ -310,9 +331,9 @@ async fn create_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Re
     let meta = BucketMeta {
         name: bucket.to_string(),
         created_at: now_rfc3339(),
-        owner: s3.principal.access_key.clone(),
+        owner: s3.principal()?.access_key.clone(),
         // The creating key gets full access; other keys must be granted.
-        perms: [(s3.principal.access_key.clone(), BucketPerms::FULL)].into(),
+        perms: [(s3.principal()?.access_key.clone(), BucketPerms::FULL)].into(),
         visibility: "private".to_string(),
         object_count: 0,
         total_bytes: 0,
@@ -332,13 +353,13 @@ async fn create_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Re
 
 fn head_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::READ)?;
     Ok(empty_response(StatusCode::OK, s3.response_headers()))
 }
 
 async fn delete_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let has_objects = !st
         .meta
         .scan_json::<ObjectMeta>(OBJECTS, Some(&format!("{bucket}\u{0}")), 1)
@@ -382,14 +403,14 @@ fn list_objects_common(
     v2: bool,
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::READ)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::READ)?;
 
     let prefix = s3.query.value("prefix").unwrap_or("").to_string();
     let delimiter = s3.query.value("delimiter").unwrap_or("").to_string();
     let max_keys = s3
         .query
         .u32_value("max-keys")
-        .map_err(|e| S3Error::invalid_argument("max-keys", &e))?;
+        .map_err(|e| S3Error::invalid_argument("max-keys", &e.to_string()))?;
     let max_keys = max_keys.unwrap_or(1000).clamp(1, 1000) as usize;
     let start_after = s3.query.value("start-after").unwrap_or("").to_string();
     let token = s3
@@ -542,7 +563,7 @@ async fn delete_objects(
     body: Body,
 ) -> Result<Response, S3Error> {
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let body = axum::body::to_bytes(body, 2 * 1024 * 1024)
         .await
         .map_err(|_| S3Error::invalid_request("DeleteObjects body too large or unreadable"))?;
@@ -637,8 +658,12 @@ pub(crate) fn adjust_bucket_stats(
 }
 
 fn state_audit(st: &AppState, s3: &S3Request, action: &str, target: &str, detail: &str) {
+    let actor = match s3.principal.as_ref() {
+        Some(p) => format!("s3:{}", p.label),
+        None => "s3:anonymous".to_string(),
+    };
     st.meta.audit(
-        &format!("s3:{}", s3.principal.label),
+        &actor,
         action,
         target,
         detail,
@@ -674,7 +699,7 @@ async fn create_multipart(
         .to_string();
     crate::data::validate_object_key(&key)?;
     let b = load_bucket(st, bucket)?;
-    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    st.auth.authorize(s3.principal()?, &b, BucketPerms::WRITE)?;
     let upload_id = format!("{}{}", uuid::Uuid::new_v4().simple(), st.started_unix);
     let record = MultipartUpload {
         upload_id: upload_id.clone(),
