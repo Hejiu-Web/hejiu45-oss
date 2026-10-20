@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)](https://www.rust-lang.org)
 
-[English](#english) · [中文](#中文)
+[English](#english) · [中文](#中文) · [Changelog](CHANGELOG.md)
 
 </div>
 
