@@ -61,12 +61,21 @@ function Check([string]$Name, [scriptblock]$Test) {
     # Native exit codes are deliberately NOT inspected here: `$LASTEXITCODE`
     # propagation out of a scriptblock differs between PowerShell 5.1 and 7.
     # Blocks that expect a CLI failure assert it with `CheckFails`.
+    # Redirect the block's stderr to a file rather than using `2>&1`: under
+    # PowerShell 7 a native command's stderr becomes an ErrorRecord, which a
+    # try/catch treats as terminating even when the command succeeded.
+    $errFile = Join-Path ([System.IO.Path]::GetTempPath()) ("hj45err-" + [guid]::NewGuid().ToString("N").Substring(0, 8) + ".txt")
     $threw = $false
     try {
-        $out = & $Test 2>&1
+        $out = & $Test 2> $errFile
     } catch {
         $threw = $true
         $out = $_
+    }
+    if (Test-Path $errFile) {
+        $errText = Get-Content $errFile -Raw -ErrorAction SilentlyContinue
+        Remove-Item $errFile -ErrorAction SilentlyContinue
+        if ($errText) { $out = @($out) + @("stderr: $($errText.Trim())") }
     }
     if ($threw) {
         $script:fail++
@@ -94,11 +103,16 @@ function Check([string]$Name, [scriptblock]$Test) {
 # immediately after the native call, which works on both PowerShell versions.
 function CheckFails([string]$Name, [scriptblock]$Test, [string]$ExpectPattern) {
     $global:LASTEXITCODE = 0
+    $errFile = Join-Path ([System.IO.Path]::GetTempPath()) ("hj45err-" + [guid]::NewGuid().ToString("N").Substring(0, 8) + ".txt")
     $output = ""
     try {
-        $output = (& $Test 2>&1 | Out-String)
+        $output = (& $Test 2> $errFile | Out-String)
     } catch {
         $output = "$_"
+    }
+    if (Test-Path $errFile) {
+        $output += (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+        Remove-Item $errFile -ErrorAction SilentlyContinue
     }
     $code = $global:LASTEXITCODE
     $failed = ($code -ne 0) -or ($output -match "error|Error")
