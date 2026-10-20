@@ -104,9 +104,22 @@ jobs:
           done
           cat "$RUNNER_TEMP/server.log" >&2
           exit 1
+      - name: Check the toolchain the suite depends on
+        shell: pwsh
+        run: |
+          $PSVersionTable | Format-Table | Out-String | Write-Host
+          (Get-Command aws -All -ErrorAction SilentlyContinue) | Format-List Name, CommandType, Source | Out-String | Write-Host
+          aws --version
+          "AK set: $([bool]$env:AWS_ACCESS_KEY_ID)  SK set: $([bool]$env:AWS_SECRET_ACCESS_KEY)"
+          curl.exe -fsS http://127.0.0.1:9000/healthz
       - name: Run the AWS CLI suite
         shell: pwsh
-        run: ./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3
+        run: |
+          ./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error title=E2E suite::the AWS CLI suite reported failures (exit $LASTEXITCODE)"
+            exit 1
+          }
 
 
 

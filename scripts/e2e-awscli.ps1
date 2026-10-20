@@ -71,7 +71,11 @@ function Check([string]$Name, [scriptblock]$Test) {
     if ($threw) {
         $script:fail++
         Write-Host "  [FAIL] $Name" -ForegroundColor Red
+        $detail = ("$out" -split "`n" | Select-Object -Last 6) -join " | "
         ("$out" -split "`n" | Select-Object -Last 4) | ForEach-Object { Write-Host "         $_" -ForegroundColor DarkGray }
+        # GitHub renders this as an annotation on the job, which is readable
+        # without downloading logs.
+        Write-Host "::error title=E2E $Name::$($detail -replace '%','%25' -replace "`r",'' -replace "`n",' ')"
         return $null
     }
     $signalledFalse = ($out | Where-Object { $_ -is [bool] -and $_ -eq $false }) -ne $null
@@ -101,11 +105,14 @@ function CheckFails([string]$Name, [scriptblock]$Test, [string]$ExpectPattern) {
     if (-not $failed) {
         $script:fail++
         Write-Host "  [FAIL] $Name (expected failure, command succeeded)" -ForegroundColor Red
+        Write-Host "::error title=E2E $Name::expected the AWS CLI to fail but it succeeded"
         return
     }
     if ($ExpectPattern -and ($output -notmatch $ExpectPattern)) {
         $script:fail++
         Write-Host "  [FAIL] $Name (expected /$ExpectPattern/)" -ForegroundColor Red
+        $detail = ($output -split "`n" | Select-Object -Last 6) -join " | "
+        Write-Host "::error title=E2E $Name::output did not match /$ExpectPattern/: $($detail -replace '%','%25' -replace "`r",'' -replace "`n",' ')"
         ($output -split "`n" | Select-Object -First 3) | ForEach-Object { Write-Host "         $_" -ForegroundColor DarkGray }
         return
     }
