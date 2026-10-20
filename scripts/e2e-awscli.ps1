@@ -57,13 +57,23 @@ $script:fail = 0
 $script:pass = 0
 
 function Check([string]$Name, [scriptblock]$Test) {
-    # `$LASTEXITCODE` is global and survives a scriptblock invocation, but a
-    # block that captures it locally must be read *inside* the block. Capture
-    # here immediately after the call so both styles work.
-    $out = & $Test 2>&1
-    # A block may signal failure either by throwing (preferred) or by returning
-    # exactly `$false`. Exit codes are not used: a scriptblock's $LASTEXITCODE
-    # does not propagate reliably to the caller in Windows PowerShell 5.1.
+    # A block fails by throwing (preferred) or by returning exactly `$false`.
+    # Native exit codes are deliberately NOT inspected here: `$LASTEXITCODE`
+    # propagation out of a scriptblock differs between PowerShell 5.1 and 7.
+    # Blocks that expect a CLI failure assert it with `CheckFails`.
+    $threw = $false
+    try {
+        $out = & $Test 2>&1
+    } catch {
+        $threw = $true
+        $out = $_
+    }
+    if ($threw) {
+        $script:fail++
+        Write-Host "  [FAIL] $Name" -ForegroundColor Red
+        ("$out" -split "`n" | Select-Object -Last 4) | ForEach-Object { Write-Host "         $_" -ForegroundColor DarkGray }
+        return $null
+    }
     $signalledFalse = ($out | Where-Object { $_ -is [bool] -and $_ -eq $false }) -ne $null
     if ($signalledFalse) {
         $script:fail++
@@ -74,6 +84,33 @@ function Check([string]$Name, [scriptblock]$Test) {
     $script:pass++
     Write-Host "  [PASS] $Name" -ForegroundColor Green
     return $out
+}
+
+# Assert that a command *fails*; `$LASTEXITCODE` is read inside this scope,
+# immediately after the native call, which works on both PowerShell versions.
+function CheckFails([string]$Name, [scriptblock]$Test, [string]$ExpectPattern) {
+    $global:LASTEXITCODE = 0
+    $output = ""
+    try {
+        $output = (& $Test 2>&1 | Out-String)
+    } catch {
+        $output = "$_"
+    }
+    $code = $global:LASTEXITCODE
+    $failed = ($code -ne 0) -or ($output -match "error|Error")
+    if (-not $failed) {
+        $script:fail++
+        Write-Host "  [FAIL] $Name (expected failure, command succeeded)" -ForegroundColor Red
+        return
+    }
+    if ($ExpectPattern -and ($output -notmatch $ExpectPattern)) {
+        $script:fail++
+        Write-Host "  [FAIL] $Name (expected /$ExpectPattern/)" -ForegroundColor Red
+        ($output -split "`n" | Select-Object -First 3) | ForEach-Object { Write-Host "         $_" -ForegroundColor DarkGray }
+        return
+    }
+    $script:pass++
+    Write-Host "  [PASS] $Name" -ForegroundColor Green
 }
 
 $bucket = "cli-" + ([guid]::NewGuid().ToString("N").Substring(0, 10))
@@ -222,19 +259,17 @@ Check "presign then GET without credentials" {
 }
 
 # --- error handling --------------------------------------------------------
-Check "head-bucket on a missing bucket fails with 404" {
-    & $aws s3api head-bucket --bucket "no-such-bucket-hj45" @S3 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { throw "expected a failure, got exit 0" }
-}
-Check "wrong secret produces 403 SignatureDoesNotMatch" {
-    $good = $env:AWS_SECRET_ACCESS_KEY
-    $env:AWS_SECRET_ACCESS_KEY = "definitely-not-the-secret"
-    try {
-        & $aws s3 ls "s3://$bucket/" @S3 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) { throw "signed with a bad secret but succeeded" }
-    } finally {
-        $env:AWS_SECRET_ACCESS_KEY = $good
-    }
+CheckFails "head-bucket on a missing bucket fails with 404" {
+    & $aws s3api head-bucket --bucket "no-such-bucket-hj45" @S3
+} "404|NotFound|Not Found"
+$goodSecret = $env:AWS_SECRET_ACCESS_KEY
+$env:AWS_SECRET_ACCESS_KEY = "definitely-not-the-secret"
+try {
+    CheckFails "wrong secret produces 403 SignatureDoesNotMatch" {
+        & $aws s3 ls "s3://$bucket/" @S3
+    } "SignatureDoesNotMatch|403|Forbidden"
+} finally {
+    $env:AWS_SECRET_ACCESS_KEY = $goodSecret
 }
 
 # --- teardown --------------------------------------------------------------
