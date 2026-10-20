@@ -1,4 +1,4 @@
-﻿//! Query-string parsing for S3 operations.
+//! Query-string parsing for S3 operations.
 //!
 //! S3 uses valueless parameters as sub-resource selectors (`?acl`, `?uploads`,
 //! `?delete`) and plain parameters as arguments (`?prefix=`, `?list-type=2`).
@@ -128,7 +128,10 @@ impl ByteRange {
     /// `Ok(Some(Err(RangeError::Unsatisfiable)))` for a syntactically valid
     /// range past the end, so the caller can emit `416` with the right
     /// `Content-Range`.
-    pub fn parse(header: &str, size: u64) -> Result<Option<Result<ByteRange, RangeError>>, RangeError> {
+    pub fn parse(
+        header: &str,
+        size: u64,
+    ) -> Result<Option<Result<ByteRange, RangeError>>, RangeError> {
         let Some(spec) = header.trim().strip_prefix("bytes=") else {
             return Ok(None);
         };
@@ -228,11 +231,23 @@ mod tests {
             Ok(Some(Ok(ByteRange { start: 0, end: 99 })))
         );
         // Unsatisfiable.
-        assert_eq!(ByteRange::parse("bytes=100-", 100), Ok(Some(Err(RangeError::Unsatisfiable))));
-        assert_eq!(ByteRange::parse("bytes=0-0", 0), Ok(Some(Err(RangeError::Unsatisfiable))));
+        assert_eq!(
+            ByteRange::parse("bytes=100-", 100),
+            Ok(Some(Err(RangeError::Unsatisfiable)))
+        );
+        assert_eq!(
+            ByteRange::parse("bytes=0-0", 0),
+            Ok(Some(Err(RangeError::Unsatisfiable)))
+        );
         // Malformed.
-        assert_eq!(ByteRange::parse("bytes=abc", 100), Err(RangeError::Malformed));
-        assert_eq!(ByteRange::parse("bytes=5-1", 100), Err(RangeError::Malformed));
+        assert_eq!(
+            ByteRange::parse("bytes=abc", 100),
+            Err(RangeError::Malformed)
+        );
+        assert_eq!(
+            ByteRange::parse("bytes=5-1", 100),
+            Err(RangeError::Malformed)
+        );
         // Absent / non-byte units.
         assert_eq!(ByteRange::parse("items=0-5", 100), Ok(None));
     }
@@ -243,5 +258,3 @@ mod tests {
         assert_eq!(ByteRange { start: 5, end: 5 }.len(), 1);
     }
 }
-
-

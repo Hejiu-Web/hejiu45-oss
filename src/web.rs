@@ -1,4 +1,4 @@
-﻿//! Serving of the embedded console (Vue 3 SPA built by Vite).
+//! Serving of the embedded console (Vue 3 SPA built by Vite).
 //!
 //! `rust-embed` writes `frontend/dist/` into the binary at compile time, so a
 //! running server needs no static files and no `Node.js`.
@@ -101,4 +101,3 @@ mod tests {
         assert!(cache_control("favicon.ico").contains("must-revalidate"));
     }
 }
-

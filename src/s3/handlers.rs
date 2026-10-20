@@ -1,4 +1,4 @@
-﻿//! S3 object and bucket operations.
+//! S3 object and bucket operations.
 //!
 //! ## Authentication
 //!
@@ -80,6 +80,29 @@ impl S3Request {
             raw_query,
             principal,
         })
+    }
+
+    /// How this request's body is framed (`aws-chunked` for SDK streaming
+    /// uploads, plain bytes otherwise).
+    pub fn body_encoding(&self) -> crate::s3::chunked::BodyEncoding {
+        let enc = self
+            .headers
+            .get("content-encoding")
+            .and_then(|v| v.to_str().ok());
+        let decoded = self
+            .headers
+            .get("x-amz-decoded-content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        crate::s3::chunked::BodyEncoding::detect(enc, decoded)
+    }
+
+    /// `x-amz-decoded-content-length`, the payload size after de-framing.
+    pub fn decoded_content_length(&self) -> Option<u64> {
+        self.headers
+            .get("x-amz-decoded-content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
     }
 
     /// Declared payload hash that must be enforced while streaming, if any.
@@ -727,4 +750,3 @@ pub fn collect_stored_headers(headers: &HeaderMap) -> std::collections::BTreeMap
         })
         .collect()
 }
-

@@ -1,4 +1,4 @@
-﻿//! AWS Signature Version 4 *verification* (server side).
+//! AWS Signature Version 4 *verification* (server side).
 //!
 //! Why this is hand-written while request *signing* uses `rusty-s3`:
 //! `rusty-s3` computes signatures for outgoing requests. Verification needs the
@@ -931,4 +931,3 @@ mod tests {
         assert_eq!(percent_decode("bad%zz"), "bad%zz");
     }
 }
-

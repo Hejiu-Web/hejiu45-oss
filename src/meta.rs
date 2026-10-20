@@ -217,6 +217,9 @@ pub struct MultipartUpload {
 pub struct Meta {
     db: Arc<parking_lot::Mutex<Option<Database>>>,
     path: Arc<std::path::PathBuf>,
+    /// Serialises read-modify-write sequences that span several rows or load,
+    /// mutate and store one row (see [`Meta::update_json`]).
+    merge_lock: Arc<parking_lot::Mutex<()>>,
 }
 
 impl std::fmt::Debug for Meta {
@@ -256,6 +259,7 @@ impl Meta {
         Ok(Self {
             db: Arc::new(parking_lot::Mutex::new(Some(db))),
             path: Arc::new(path.to_path_buf()),
+            merge_lock: Arc::new(parking_lot::Mutex::new(())),
         })
     }
 
@@ -309,6 +313,7 @@ impl Meta {
         Ok(Self {
             db: Arc::new(parking_lot::Mutex::new(Some(db))),
             path: Arc::new(path.to_path_buf()),
+            merge_lock: Arc::new(parking_lot::Mutex::new(())),
         })
     }
 
@@ -381,6 +386,44 @@ impl Meta {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Read-modify-write a JSON row under a **global write lock**.
+    ///
+    /// The naive `get_json` + `put_json` pair is not atomic: two concurrent
+    /// requests (e.g. parallel multipart part uploads from one SDK) both read
+    /// the old row and the second write clobbers the first. Anything that
+    /// updates a shared row must go through this method.
+    pub fn update_json<T, F>(
+        &self,
+        table: TableDefinition<&str, &str>,
+        key: &str,
+        f: F,
+    ) -> anyhow::Result<Option<T>>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+        F: FnOnce(&mut T),
+    {
+        let _guard = self.merge_lock.lock();
+        let tx = self.write()?;
+        let current = {
+            let t = tx.open_table(table)?;
+            match t.get(key)? {
+                Some(v) => Some(serde_json::from_str::<T>(v.value())?),
+                None => None,
+            }
+        };
+        let Some(mut value) = current else {
+            return Ok(None);
+        };
+        f(&mut value);
+        {
+            let mut t = tx.open_table(table)?;
+            let json = serde_json::to_string(&value)?;
+            t.insert(key, json.as_str())?;
+        }
+        tx.commit()?;
+        Ok(Some(value))
     }
 
     /// Delete a row; returns whether it existed.

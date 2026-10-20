@@ -1,4 +1,4 @@
-﻿//! Authentication and authorisation for the S3 data plane.
+//! Authentication and authorisation for the S3 data plane.
 //!
 //! Layers, from outside in:
 //!
@@ -726,4 +726,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
-

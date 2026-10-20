@@ -20,6 +20,7 @@
 //! Every request is authenticated by SigV4 before reaching an operation;
 //! per-operation permission is then checked against the bucket ACL.
 
+pub mod chunked;
 pub mod handlers;
 pub mod object;
 pub mod query;

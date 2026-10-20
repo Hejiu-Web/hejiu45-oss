@@ -1,4 +1,4 @@
-﻿//! S3 object operations: PUT, GET, HEAD, DELETE, COPY, and multipart parts.
+//! S3 object operations: PUT, GET, HEAD, DELETE, COPY, and multipart parts.
 //!
 //! All handlers assume the caller already verified the signature and passed
 //! [`crate::s3::handlers::S3Request::authenticate`].
@@ -15,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use crate::data::{StoredObject, validate_object_key};
 use crate::error::{S3Error, xml_escape};
 use crate::meta::{BucketPerms, MULTIPARTS, MultipartUpload, OBJECTS, ObjectMeta, composite_key};
+use crate::s3::chunked::BodyEncoding;
 use crate::s3::handlers::{
     S3Request, adjust_bucket_stats, collect_stored_headers, collect_user_meta,
     delete_single_object, etag_quoted, load_bucket, load_object,
@@ -61,9 +62,8 @@ async fn dispatch_inner(
         (Method::HEAD, None) => head_object(st, &s3, bucket, &key),
         (Method::PUT, _) if has_upload_id => upload_part(st, &s3, bucket, &key, req).await,
         (Method::PUT, _) => put_object(st, &s3, bucket, &key, req).await,
-        (Method::POST, Some("uploads")) => Err(S3Error::invalid_request(
-            "CreateMultipartUpload is a bucket-level operation (POST /{bucket}?uploads&key=...).",
-        )),
+        // Standard S3: CreateMultipartUpload is POST /{bucket}/{key}?uploads.
+        (Method::POST, Some("uploads")) => create_multipart_object(st, &s3, bucket, &key).await,
         (Method::POST, _) if has_upload_id => complete_multipart(st, &s3, bucket, &key, req).await,
         (Method::GET, Some("uploads")) => list_multipart_uploads(st, &s3, bucket),
         (Method::DELETE, _) if has_upload_id => abort_multipart(st, &s3, bucket, &key).await,
@@ -98,12 +98,27 @@ async fn put_object(
         .into_body()
         .into_data_stream()
         .map_err(std::io::Error::other);
-    let reader = tokio_util::io::StreamReader::new(stream);
-
+    let raw = tokio_util::io::StreamReader::new(stream);
+    // AWS SDKs stream uploads as `aws-chunked`; the framing must be stripped or
+    // the stored object gains 54 bytes per part.
     let limit = st.args.max_object_bytes;
-    let stored = match expected.as_deref() {
-        Some(want) => st.data.stage_verified(reader, limit, want).await?,
-        None => st.data.stage(reader, limit).await?,
+    let stored = match s3.body_encoding() {
+        BodyEncoding::Identity => match expected.as_deref() {
+            Some(want) => st.data.stage_verified(raw, limit, want).await?,
+            None => st.data.stage(raw, limit).await?,
+        },
+        BodyEncoding::AwsChunked => {
+            // The frames only make sense in order, so decode them first; the
+            // resulting payload is then staged like any other body.
+            let payload = crate::s3::chunked::Decoder::new(raw, s3.decoded_content_length())
+                .read_all(limit)
+                .await
+                .map_err(|e| S3Error::invalid_request(format!("Invalid aws-chunked body: {e}")))?;
+            match expected.as_deref() {
+                Some(want) => st.data.stage_verified(&payload[..], limit, want).await?,
+                None => st.data.stage(&payload[..], limit).await?,
+            }
+        }
     };
 
     let meta = build_object_meta(key, bucket, &stored, req_headers_after(st, s3));
@@ -446,6 +461,56 @@ fn load_upload(
     Ok(up)
 }
 
+/// `POST /{bucket}/{key}?uploads` — CreateMultipartUpload.
+///
+/// This is the form every real SDK uses (the key is in the path). The
+/// bucket-level `POST /{bucket}?uploads&key=...` form is accepted as well, for
+/// hand-rolled clients.
+async fn create_multipart_object(
+    st: &AppState,
+    s3: &S3Request,
+    bucket: &str,
+    key: &str,
+) -> Result<Response, S3Error> {
+    let b = load_bucket(st, bucket)?;
+    st.auth.authorize(&s3.principal, &b, BucketPerms::WRITE)?;
+    let upload_id = format!("{}{}", uuid::Uuid::new_v4().simple(), st.started_unix);
+    let record = MultipartUpload {
+        upload_id: upload_id.clone(),
+        bucket: bucket.to_string(),
+        key: key.to_string(),
+        initiated_at: time::OffsetDateTime::now_utc().unix_timestamp(),
+        content_type: s3
+            .headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string(),
+        user_meta: collect_user_meta(&s3.headers),
+        headers: collect_stored_headers(&s3.headers),
+        parts: Default::default(),
+    };
+    st.meta
+        .put_json(MULTIPARTS, &upload_key(bucket, &upload_id), &record)
+        .map_err(S3Error::internal)?;
+    let inner = format!(
+        "<Bucket>{}</Bucket><Key>{}</Key><UploadId>{}</UploadId>",
+        xml_escape(bucket),
+        xml_escape(key),
+        xml_escape(&upload_id)
+    );
+    let mut res = Response::new(Body::from(xml::envelope(
+        "InitiateMultipartUploadResult",
+        &inner,
+    )));
+    *res.status_mut() = StatusCode::OK;
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/xml"),
+    );
+    Ok(res)
+}
+
 async fn upload_part(
     st: &AppState,
     s3: &S3Request,
@@ -477,15 +542,42 @@ async fn upload_part(
         .into_body()
         .into_data_stream()
         .map_err(std::io::Error::other);
-    let reader = tokio_util::io::StreamReader::new(stream);
+    let raw = tokio_util::io::StreamReader::new(stream);
+    // Multipart parts are *always* framed as `aws-chunked` by the AWS SDKs
+    // (they are signed with STREAMING-AWS4-HMAC-SHA256-PAYLOAD).
     let stored = match s3.expected_body_sha256() {
-        Some(want) => {
-            st.data
-                .stage_verified(reader, Some(MAX_PART_BYTES), want)
-                .await?
-        }
-        None => st.data.stage(reader, Some(MAX_PART_BYTES)).await?,
+        Some(want) => match s3.body_encoding() {
+            BodyEncoding::Identity => {
+                st.data
+                    .stage_verified(raw, Some(MAX_PART_BYTES), want)
+                    .await?
+            }
+            BodyEncoding::AwsChunked => {
+                let payload = crate::s3::chunked::Decoder::new(raw, s3.decoded_content_length())
+                    .read_all(Some(MAX_PART_BYTES))
+                    .await
+                    .map_err(|e| {
+                        S3Error::invalid_request(format!("Invalid aws-chunked body: {e}"))
+                    })?;
+                st.data
+                    .stage_verified(&payload[..], Some(MAX_PART_BYTES), want)
+                    .await?
+            }
+        },
+        None => match s3.body_encoding() {
+            BodyEncoding::Identity => st.data.stage(raw, Some(MAX_PART_BYTES)).await?,
+            BodyEncoding::AwsChunked => {
+                let payload = crate::s3::chunked::Decoder::new(raw, s3.decoded_content_length())
+                    .read_all(Some(MAX_PART_BYTES))
+                    .await
+                    .map_err(|e| {
+                        S3Error::invalid_request(format!("Invalid aws-chunked body: {e}"))
+                    })?;
+                st.data.stage(&payload[..], Some(MAX_PART_BYTES)).await?
+            }
+        },
     };
+
     // Move the staged part into the upload directory under its part number.
     let dest = st.data.multipart_part_path(&upload_id, part_number);
     if let Some(parent) = dest.parent() {
@@ -497,11 +589,21 @@ async fn upload_part(
         .await
         .map_err(S3Error::internal)?;
 
-    let mut up: MultipartUpload = load_upload(st, bucket, key, &upload_id)?;
-    up.parts.insert(part_number, stored.md5_hex.clone());
+    // Atomic read-modify-write: AWS SDKs upload parts concurrently, so a
+    // load-mutate-store sequence here would drop sibling part records.
+    let md5 = stored.md5_hex.clone();
     st.meta
-        .put_json(MULTIPARTS, &upload_key(bucket, &upload_id), &up)
-        .map_err(S3Error::internal)?;
+        .update_json::<MultipartUpload, _>(MULTIPARTS, &upload_key(bucket, &upload_id), |up| {
+            up.parts.insert(part_number, md5);
+        })
+        .map_err(S3Error::internal)?
+        .ok_or_else(|| {
+            S3Error::new(
+                StatusCode::NOT_FOUND,
+                "NoSuchUpload",
+                "The upload was aborted concurrently.",
+            )
+        })?;
 
     let mut res = Response::new(Body::empty());
     res.headers_mut().insert(
@@ -574,6 +676,7 @@ async fn complete_multipart(
         let mut part = tokio::fs::File::open(&part_path)
             .await
             .map_err(|_| S3Error::invalid_request(format!("Part {n} is missing on disk.")))?;
+
         let copied = tokio::io::copy(&mut part, &mut out)
             .await
             .map_err(S3Error::internal)?;
@@ -708,4 +811,3 @@ pub use crate::data::validate_object_key as _validate_object_key;
 
 /// Type alias kept for documentation of ownership in handlers.
 pub type ArcState = Arc<AppState>;
-

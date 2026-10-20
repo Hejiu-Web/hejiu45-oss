@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # hejiu45-oss
 
@@ -232,8 +232,9 @@ hejiu45-oss --data-dir /var/lib/hejiu45-oss --init-access-key ci --init-bucket a
 ### 测试
 
 ```bash
-cargo test --lib                                    # 单元测试（含 AWS SigV4 向量）
-./scripts/e2e-s3.ps1 -Base http://127.0.0.1:9000    # 23 项真实 S3 端到端检查
+cargo test --lib                                         # 63 个单元测试（含 AWS SigV4 向量）
+./scripts/e2e-s3.ps1    -Base http://127.0.0.1:9000      # 23 项手写 SigV4 端到端检查
+./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3   # 21 项真实 AWS CLI 检查
 ```
 
 端到端脚本用真实 SigV4 签名发起请求，并覆盖关键的反向用例：
@@ -401,8 +402,9 @@ hejiu45-oss --data-dir DIR --init-access-key ci --init-bucket artifacts
 ### Testing
 
 ```bash
-cargo test --lib                                  # unit tests incl. AWS SigV4 vectors
-./scripts/e2e-s3.ps1 -Base http://127.0.0.1:9000  # 23 live S3 checks
+cargo test --lib                                      # 63 unit tests incl. AWS SigV4 vectors
+./scripts/e2e-s3.ps1    -Base http://127.0.0.1:9000   # 23 checks, hand-signed SigV4
+./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3   # 21 checks with the real AWS CLI
 ```
 
 The e2e script signs real SigV4 requests and covers the negative cases that
@@ -422,3 +424,4 @@ frontend/       Vue 3 (plain JS) deploy/      Nginx / Caddy configs
 ### License
 
 MIT. See [LICENSE](LICENSE).
+

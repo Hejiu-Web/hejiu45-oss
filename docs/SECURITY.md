@@ -1,4 +1,4 @@
-# Security model
+﻿# Security model
 
 This document describes what `hejiu45-oss` protects, what it does not, and the
 reasoning behind the controls. It is the reference for operators and auditors.
@@ -222,3 +222,4 @@ Credit will be given unless you ask otherwise.
 - [ ] `--public-url` matches the URL users and SDKs actually use (presigned URLs
       are host-bound).
 - [ ] The data directory is not world-readable.
+

@@ -304,15 +304,26 @@ mod tests {
         let sealed = sb.seal(b"super-secret-ak").unwrap();
         assert!(sealed.starts_with("v1:"));
         assert_eq!(sb.open(&sealed).unwrap(), b"super-secret-ak");
-        // Flipping any character must fail authentication, and the plaintext
-        // must never appear verbatim in the sealed blob.
-        let mut bad = sealed.clone();
-        let last = bad.pop().unwrap();
-        bad.push(if last == 'A' { 'B' } else { 'A' });
-        assert!(sb.open(&bad).is_err());
-        // The sealed blob is base64url, so the plaintext cannot reappear verbatim;
-        // assert on the decoded bytes instead of the ASCII-looking source.
-        let raw = b64_decode(sealed.strip_prefix("v1:").unwrap()).unwrap();
+
+        // Flipping any *ciphertext, nonce or tag* byte must fail
+        // authentication. (Flipping the last base64url character only touches
+        // discarded trailing bits when the byte length is not a multiple of 3,
+        // which is why the test tampers with decoded bytes, not characters.)
+        let body = sealed.strip_prefix("v1:").unwrap();
+        let raw = b64_decode(body).unwrap();
+        assert_eq!(
+            raw.len(),
+            12 + b"super-secret-ak".len() + 16,
+            "nonce|ct|tag"
+        );
+        for pos in [0usize, 11, 12, raw.len() - 17, raw.len() - 1] {
+            let mut tampered = raw.clone();
+            tampered[pos] ^= 0x01;
+            let blob = format!("v1:{}", b64url_encode(&tampered));
+            assert!(sb.open(&blob).is_err(), "byte {pos} was not authenticated");
+        }
+
+        // The plaintext must never appear verbatim in the sealed blob.
         assert!(
             !raw.windows(b"super-secret-ak".len())
                 .any(|w| w == b"super-secret-ak"),

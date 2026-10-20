@@ -1,4 +1,4 @@
-﻿//! Command-line surface and runtime configuration.
+//! Command-line surface and runtime configuration.
 //!
 //! Every option has an environment-variable equivalent so the same binary
 //! works for `myoss --flag`, `MYOSS_FLAG=1 myoss` and `--config file.toml`.
@@ -211,4 +211,3 @@ mod tests {
         assert!(!a.secure_cookies());
     }
 }
-

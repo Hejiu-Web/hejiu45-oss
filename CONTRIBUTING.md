@@ -1,4 +1,4 @@
-# Contributing
+﻿# Contributing
 
 Thanks for taking a look. This project values small, reviewable changes and
 explicit reasoning over clever code.
@@ -46,6 +46,10 @@ End-to-end (needs a running server and an access key):
 ./target/debug/hejiu45-oss --data-dir ./data --allow-insecure &
 
 HEJIU45_OSS_AK=... HEJIU45_OSS_SK=... ./scripts/e2e-s3.ps1 -Base http://127.0.0.1:9000
+
+# Compatibility with the official CLI (needs `aws` on PATH)
+$env:AWS_ACCESS_KEY_ID="..."; $env:AWS_SECRET_ACCESS_KEY="..."
+./scripts/e2e-awscli.ps1 -Endpoint http://127.0.0.1:9000/s3
 ```
 
 The e2e script covers the security-relevant negative cases; please extend it
@@ -90,3 +94,4 @@ rather than adding a test that only proves the happy path.
    (amd64/arm64) and Windows binaries, writes `checksums-hejiu45-oss.txt`, and
    publishes the release.
 4. Installers pick up `releases/latest/download/...` automatically.
+
