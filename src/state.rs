@@ -10,7 +10,7 @@ use axum::response::Response;
 use crate::auth::Authenticator;
 use crate::config::Args;
 use crate::data::Data;
-use crate::meta::Meta;
+use crate::meta::{Limits, Meta, SETTINGS};
 
 /// Extra per-request data injected by [`capture_raw_path`].
 ///
@@ -34,6 +34,12 @@ pub struct AppState {
     /// Server start time, for uptime reporting.
     pub started_at: std::time::Instant,
     pub started_unix: i64,
+    /// Live upload limits.
+    ///
+    /// Cached in memory because every upload checks it, and re-read on change
+    /// from the console. The database is the source of truth; this is the hot
+    /// copy so a PUT does not hit redb just to read a number.
+    pub limits: Arc<parking_lot::RwLock<Limits>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -48,6 +54,40 @@ impl std::fmt::Debug for AppState {
 impl AppState {
     pub fn region(&self) -> &str {
         &self.args.region
+    }
+
+    /// Current upload limits (cheap read of the in-memory copy).
+    pub fn limits(&self) -> Limits {
+        self.limits.read().clone()
+    }
+
+    /// Persist new limits and make them take effect immediately.
+    ///
+    /// Write-then-cache so a failed database write does not leave the running
+    /// process enforcing something that would be lost on restart.
+    pub fn set_limits(&self, next: Limits) -> anyhow::Result<Limits> {
+        let normalized = next.normalized();
+        self.meta.put_json(SETTINGS, Limits::KEY, &normalized)?;
+        *self.limits.write() = normalized.clone();
+        Ok(normalized)
+    }
+
+    /// Load limits at boot.
+    ///
+    /// Precedence: an explicit command-line/env value wins (so a bad stored
+    /// value can always be overridden by an operator with shell access), then
+    /// the persisted value, then the built-in default.
+    pub fn load_limits(meta: &Meta, args: &Args) -> Limits {
+        let stored = meta
+            .get_json::<Limits>(SETTINGS, Limits::KEY)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let mut limits = stored.normalized();
+        if let Some(v) = args.max_object_bytes {
+            limits.max_object_bytes = Some(v);
+        }
+        limits
     }
 
     /// Best-effort client address for audit logs.

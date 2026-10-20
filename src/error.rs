@@ -265,6 +265,15 @@ impl ApiError {
         Self::new(StatusCode::TOO_MANY_REQUESTS, "TooManyRequests", msg)
     }
 
+    /// Payload exceeds the configured upload limit.
+    pub fn too_large() -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "PayloadTooLarge",
+            "The upload exceeds the configured maximum object size.",
+        )
+    }
+
     pub fn internal(detail: impl std::fmt::Display) -> Self {
         tracing::error!(error = %detail, "internal API error");
         Self::new(

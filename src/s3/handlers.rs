@@ -116,6 +116,19 @@ impl S3Request {
             .and_then(|v| v.parse::<u64>().ok())
     }
 
+    /// The payload size the client declared, preferring the de-framed length.
+    ///
+    /// Used to reject an oversized upload before reading it. Advisory only: the
+    /// streaming limit still applies, because a client can lie here.
+    pub fn declared_body_len(&self) -> Option<u64> {
+        self.decoded_content_length().or_else(|| {
+            self.headers
+                .get(header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+        })
+    }
+
     /// Declared payload hash that must be enforced while streaming, if any.
     pub fn expected_body_sha256(&self) -> Option<&str> {
         let h = self

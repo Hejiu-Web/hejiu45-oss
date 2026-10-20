@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod session;
+pub mod upload;
 
 pub use api::*;
 
@@ -47,4 +48,34 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/keys/{id}/rotate", post(api::rotate_key))
         .route("/api/keys/{id}/grants", put(api::set_grants))
+        // Console-originated data plane: uploads, downloads and deletes that a
+        // signed-in operator performs from the browser (no access key needed).
+        .route(
+            "/api/buckets/{name}/objects",
+            axum::routing::put(upload::put_object).delete(upload::delete_object),
+        )
+        .route(
+            "/api/buckets/{name}/object",
+            axum::routing::get(upload::download_object),
+        )
+        .route(
+            "/api/buckets/{name}/uploads",
+            axum::routing::post(upload::init_upload),
+        )
+        .route(
+            "/api/buckets/{name}/uploads/{id}/parts/{part}",
+            axum::routing::put(upload::put_part),
+        )
+        .route(
+            "/api/buckets/{name}/uploads/{id}/complete",
+            axum::routing::post(upload::complete_upload),
+        )
+        .route(
+            "/api/buckets/{name}/uploads/{id}",
+            axum::routing::delete(upload::abort_upload),
+        )
+        .route(
+            "/api/settings/limits",
+            axum::routing::get(upload::get_limits).patch(upload::set_limits),
+        )
 }

@@ -219,6 +219,43 @@ cargo build --release
 `npm run check:i18n` 会校验各语言键集合一致、且代码中引用的键都存在，
 该检查已挂在 `npm run build` 之前，漏翻会**直接构建失败**。
 
+### 浏览器上传文件
+
+控制台**可以直接上传文件**，不需要先创建访问密钥。进入任意存储桶，点「上传」即可：
+
+| 能力 | 说明 |
+| :-- | :-- |
+| **拖拽上传** | 把文件或整个文件夹拖进上传区 |
+| **多选 / 文件夹** | 「选择文件」支持多选，「选择文件夹」保留目录结构写入对象键 |
+| **大文件** | 超过分片大小（默认 8 MiB）自动切片，**3 路并发**，可显示进度、速度、剩余时间，可随时取消 |
+| **任意类型** | 图片、PDF、SVG、JSON、文本、压缩包、二进制等一律原样存储；浏览器上报的 `Content-Type` 被保留，预览时按真实类型渲染 |
+| **两种模式** | ① 以管理员身份上传（默认，无需密钥）；② 用某把访问密钥的**预签名 PUT URL** 直传 |
+| **配套操作** | 每行对象都有 预览 / 下载 / 分享（GET 预签名）/ 删除 |
+
+**为什么默认不需要密钥**：控制台会话和 S3 的 SigV4 是两条隔离的认证路径。浏览器没有访问密钥，
+所以控制台上传由服务端校验「**管理员会话 + 桶存在**」后代为写入，不再要求密钥授权——
+否则用户为了传一个文件得先去创建密钥、再逐桶授权，体验过于绕。想严格走密钥路径时，
+在上传区切到第二模式即可。
+
+> 上传走的仍是**同一套落盘逻辑**（`Data::stage` → 原子替换 → 哈希），所以路径安全、
+> 去重与限流规则和 S3 上传完全一致。
+
+### 上传大小限制
+
+**设置 → 上传限制**，管理员可直接在 Web 上修改：
+
+- **单个对象最大大小**：默认 **5 GiB**，可勾选「不限制」。超出的上传在**读取请求体之前**
+  就被拒绝（413），大文件在浏览器端也会先被拦下，不浪费带宽。
+- **分片大小**：默认 **8 MiB**，范围 5 MiB – 512 MiB。浏览器上传大文件时按它切片。
+
+这两个值**持久化在元数据数据库中**，保存后**立即生效**，重启不丢；同时作用于：
+
+- 控制台上传（单次 PUT 与分片）
+- **S3 客户端的 PUT**（aws-cli、boto3 等走的 `/s3` 路径）
+
+启动参数 `--max-object-bytes` 仍可作为**兜底覆盖**（例如数据库里的值被误改时，
+有 shell 权限的运维可以强制覆盖一次）。
+
 ### 客户端接入
 
 S3 接口默认挂在 `/s3`（根路径留给控制台），使用 **path-style** 寻址。
@@ -548,6 +585,44 @@ aws --endpoint-url $ENDPOINT s3 ls s3://photos/ --recursive
 
 Works with the AWS CLI, boto3, Go v2, Java and JS SDKs: set the endpoint,
 region (`us-east-1` by default) and force path-style.
+
+### Browser uploads
+
+The console uploads files **directly — no access key required**. Open a bucket
+and click Upload:
+
+| Capability | Detail |
+| :-- | :-- |
+| **Drag and drop** | Drop files or whole folders onto the upload panel |
+| **Multi-select / folders** | "Choose files" accepts many at once; "Choose folder" keeps the directory structure in the object key |
+| **Large files** | Anything over the part size (8 MiB default) is chunked automatically, **3 parts in flight**, with progress, speed, ETA and cancel |
+| **Any file type** | Images, PDF, SVG, JSON, text, archives, binaries — stored byte-for-byte. The browser's `Content-Type` is kept, so previews render correctly |
+| **Two modes** | ① as the signed-in admin (default, no key); ② with an access key's **presigned PUT URL** |
+| **Around it** | Every row has Preview / Download / Share (presigned GET) / Delete |
+
+**Why no key by default**: console auth (cookie session) and S3 auth (SigV4) are
+deliberately isolated, and a browser holds no access key. The server therefore
+performs the write after checking *admin session + bucket exists*. Demanding a
+key and a per-bucket grant just to drag a file in would be disproportionate;
+switch to the second mode when the strict grant-scoped path matters.
+
+> Writes go through the **same storage engine** (`Data::stage` → atomic replace
+> → hashing), so path safety, hashing and limits behave exactly as for S3.
+
+### Upload limits
+
+**Settings → Upload limits**, editable in the console:
+
+- **Maximum object size** — 5 GiB by default, or tick "Unlimited". Oversized
+  uploads are rejected with 413 *before the body is read*, and the browser
+  refuses them locally so no bandwidth is wasted.
+- **Multipart part size** — 8 MiB by default, 5 MiB – 512 MiB.
+
+Both are **persisted in the metadata database**, take effect **immediately**, and
+apply to **console uploads and S3 PUTs alike** (aws-cli, boto3, …).
+
+The `--max-object-bytes` flag remains as an override for operators with shell
+access (e.g. to correct a bad stored value).
 
 ### Supported operations
 

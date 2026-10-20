@@ -101,7 +101,19 @@ async fn put_object(
     let raw = tokio_util::io::StreamReader::new(stream);
     // AWS SDKs stream uploads as `aws-chunked`; the framing must be stripped or
     // the stored object gains 54 bytes per part.
-    let limit = st.args.max_object_bytes;
+    //
+    // The limit comes from the *live* settings document (editable in the
+    // console), not from the boot flag, so a change applies to S3 clients
+    // immediately as well as to console uploads.
+    let limit = st.limits().max_object_bytes;
+    // An early 400 beats reading a huge body only to discard it.
+    if let Some(want) = s3.declared_body_len() {
+        if let Some(max) = limit {
+            if want > max {
+                return Err(S3Error::too_large());
+            }
+        }
+    }
     let stored = match s3.body_encoding() {
         BodyEncoding::Identity => match expected.as_deref() {
             Some(want) => st.data.stage_verified(raw, limit, want).await?,
@@ -150,7 +162,7 @@ fn req_headers_after<'a>(_st: &AppState, s3: &'a S3Request) -> &'a HeaderMap {
     &s3.headers
 }
 
-fn build_object_meta(
+pub(crate) fn build_object_meta(
     key: &str,
     bucket: &str,
     stored: &StoredObject,
@@ -186,7 +198,7 @@ fn build_object_meta(
 }
 
 /// Commit the staged body then the metadata row, and keep bucket stats right.
-async fn finalize_put(
+pub(crate) async fn finalize_put(
     st: &AppState,
     bucket: &str,
     meta: &ObjectMeta,

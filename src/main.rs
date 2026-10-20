@@ -90,6 +90,24 @@ async fn run(args: Args) -> anyhow::Result<()> {
         init_access_key(&auth, &meta, label, &args)?;
         return Ok(());
     }
+    // Limits: persisted value, overridable by an explicit flag at boot.
+    let limits = AppState::load_limits(&meta, &args);
+    // Materialise the defaults into the database on first start so the console
+    // always has something concrete to show and edit.
+    if meta
+        .get_json::<hejiu45_oss::meta::Limits>(
+            hejiu45_oss::meta::SETTINGS,
+            hejiu45_oss::meta::Limits::KEY,
+        )?
+        .is_none()
+    {
+        meta.put_json(
+            hejiu45_oss::meta::SETTINGS,
+            hejiu45_oss::meta::Limits::KEY,
+            &limits,
+        )?;
+    }
+
     let state = AppState {
         args: Arc::new(args.clone()),
         meta: meta.clone(),
@@ -97,6 +115,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         auth,
         started_at: std::time::Instant::now(),
         started_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
+        limits: Arc::new(parking_lot::RwLock::new(limits)),
     };
 
     if args.print_config {

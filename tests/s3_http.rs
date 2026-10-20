@@ -229,6 +229,9 @@ impl TestServer {
             auth: auth.clone(),
             started_at: std::time::Instant::now(),
             started_unix: time::OffsetDateTime::now_utc().unix_timestamp(),
+            limits: Arc::new(parking_lot::RwLock::new(
+                hejiu45_oss::meta::Limits::default(),
+            )),
         };
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

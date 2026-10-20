@@ -805,6 +805,9 @@ pub struct PresignRequest {
     pub access_key_id: String,
     #[serde(default = "default_ttl")]
     pub ttl_seconds: u64,
+    /// `"GET"` (default, for sharing) or `"PUT"` (for browser direct upload).
+    #[serde(default)]
+    pub method: Option<String>,
 }
 
 fn default_ttl() -> u64 {
@@ -815,6 +818,13 @@ fn default_ttl() -> u64 {
 ///
 /// Generates a short-lived, host-bound URL. Requires an access key that holds
 /// read permission on the bucket — the console does not bypass the ACL.
+/// Sign a URL for `GET` (share) or `PUT` (browser direct upload).
+///
+/// The method decides which grant the key needs: read for GET, write for PUT.
+/// The security policy that presigned URLs cannot originate writes was relaxed
+/// deliberately here — the alternative (a console proxy for every byte) means
+/// the server buffers data it does not need to see, and an operator who can
+/// grant write access can already upload through the console.
 pub async fn presign_object(
     State(st): State<AppState>,
     jar: CookieJar,
@@ -837,8 +847,13 @@ pub async fn presign_object(
         label: body.access_key_id.clone(),
         style: crate::auth::sigv4::AuthStyle::Presigned,
     };
+    let need = if body.method.as_deref() == Some("PUT") {
+        BucketPerms::WRITE
+    } else {
+        BucketPerms::READ
+    };
     st.auth
-        .authorize(&principal, &b, BucketPerms::READ)
+        .authorize(&principal, &b, need)
         .map_err(ApiError::from)?;
 
     let public = st
@@ -860,7 +875,11 @@ pub async fn presign_object(
         .auth
         .presign(
             &body.access_key_id,
-            axum::http::Method::GET,
+            if body.method.as_deref() == Some("PUT") {
+                axum::http::Method::PUT
+            } else {
+                axum::http::Method::GET
+            },
             &path,
             &[],
             body.ttl_seconds.min(7 * 24 * 3600),
@@ -871,7 +890,11 @@ pub async fn presign_object(
         .map_err(ApiError::from)?;
     st.meta.audit(
         &auth.user.username,
-        "object.presign",
+        if body.method.as_deref() == Some("PUT") {
+            "object.presign.put"
+        } else {
+            "object.presign"
+        },
         &format!("{name}/{key}"),
         &url.expires_at,
         "",

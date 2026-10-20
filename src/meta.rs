@@ -32,8 +32,10 @@ pub const SESSIONS: TableDefinition<&str, &str> = TableDefinition::new("sessions
 pub const AUDIT: TableDefinition<&str, &str> = TableDefinition::new("audit");
 /// `upload id` → [`MultipartUpload`]
 pub const MULTIPARTS: TableDefinition<&str, &str> = TableDefinition::new("multipart_uploads");
+/// `setting name` → JSON value (runtime-editable configuration)
+pub const SETTINGS: TableDefinition<&str, &str> = TableDefinition::new("settings");
 
-const ALL_TABLES: [&str; 7] = [
+const ALL_TABLES: [&str; 8] = [
     "buckets",
     "objects",
     "access_keys",
@@ -41,7 +43,67 @@ const ALL_TABLES: [&str; 7] = [
     "sessions",
     "audit",
     "multipart_uploads",
+    "settings",
 ];
+
+/// Runtime-editable limits, persisted in the `settings` table.
+///
+/// These are deliberately stored in the database rather than only in the
+/// command line: an operator expects to change a limit from the console and
+/// have it survive a restart. A command-line flag still wins at boot so a
+/// broken value cannot lock the deployment (see `AppState::limits`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Limits {
+    /// Largest single object accepted, in bytes. `None` means unlimited.
+    pub max_object_bytes: Option<u64>,
+    /// Size of one multipart part when the *console* uploads. The S3 side
+    /// chooses its own part size; this is what the browser is told to use.
+    pub part_bytes: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            // 5 GiB — S3's own single-object ceiling, and large enough that the
+            // default never gets in the way.
+            max_object_bytes: Some(5 * 1024 * 1024 * 1024),
+            // 8 MiB keeps per-request overhead low while staying well under the
+            // part ceiling; the browser splits anything larger automatically.
+            part_bytes: 8 * 1024 * 1024,
+        }
+    }
+}
+
+impl Limits {
+    /// The settings-table key for the limits document.
+    pub const KEY: &'static str = "limits";
+
+    /// Smallest part size a client may be told to use.
+    ///
+    /// S3 requires every part except the last to be at least 5 MiB, and our own
+    /// verification relies on that, so the browser is never allowed below it.
+    pub const MIN_PART_BYTES: u64 = 5 * 1024 * 1024;
+    /// Upper bound for a single part (matches the S3 data plane's own cap).
+    pub const MAX_PART_BYTES: u64 = 512 * 1024 * 1024;
+
+    /// Clamp to values the rest of the server can actually honour.
+    pub fn normalized(self) -> Self {
+        Self {
+            max_object_bytes: self.max_object_bytes,
+            part_bytes: self
+                .part_bytes
+                .clamp(Self::MIN_PART_BYTES, Self::MAX_PART_BYTES),
+        }
+    }
+
+    /// Whether `size` bytes may be stored as one object.
+    pub fn allows(&self, size: u64) -> bool {
+        match self.max_object_bytes {
+            Some(max) => size <= max,
+            None => true,
+        }
+    }
+}
 
 /// Rights a single access key holds on a bucket.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,6 +316,7 @@ impl Meta {
             tx.open_table(SESSIONS)?;
             tx.open_table(AUDIT)?;
             tx.open_table(MULTIPARTS)?;
+            tx.open_table(SETTINGS)?;
         }
         tx.commit()?;
         Ok(Self {
@@ -530,6 +593,30 @@ impl Meta {
             }
         }
         Ok(out)
+    }
+
+    /// Create every table this build knows about.
+    ///
+    /// redb creates a table on its first write, so a database written by an
+    /// older version is missing any table added later. Opening in write mode
+    /// materialises them, which makes an in-place upgrade work without a
+    /// migration step and lets schema checks be exact.
+    pub fn ensure_tables(&self) -> anyhow::Result<()> {
+        let tx = self.write()?;
+        for table in [
+            BUCKETS,
+            OBJECTS,
+            ACCESS_KEYS,
+            ADMIN_USERS,
+            SESSIONS,
+            AUDIT,
+            MULTIPARTS,
+            SETTINGS,
+        ] {
+            tx.open_table(table)?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Verify the table set on disk matches what this build expects.

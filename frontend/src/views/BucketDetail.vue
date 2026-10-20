@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api, toast } from '../store.js'
 import { bytes, copy, dateTime } from '../format.js'
 import { t } from '../i18n.js'
+import Uploader from '../components/Uploader.vue'
 
 const props = defineProps({ name: { type: String, required: true } })
 
@@ -10,10 +11,12 @@ const bucket = ref(null)
 const objects = ref([])
 const prefixes = ref([])
 const keys = ref([])
+const limits = ref({ max_object_bytes: null, part_bytes: 8 * 1024 * 1024 })
 const loading = ref(true)
 const error = ref('')
 const prefix = ref('')
 const searching = ref(false)
+const showUploader = ref(false)
 
 const presignFor = ref('')
 const presignTtl = ref(900)
@@ -30,6 +33,12 @@ async function load() {
     bucket.value = (b.buckets || []).find((x) => x.name === props.name) || null
     keys.value = k.keys || []
     if (!bucket.value) throw new Error(t('detail.bucketNotFound'))
+    // Limits drive the uploader's part size and early size check.
+    try {
+      limits.value = await api.get('/api/settings/limits')
+    } catch {
+      /* non-fatal: fall back to the compiled-in defaults */
+    }
     await loadObjects()
   } catch (e) {
     error.value = e.message
@@ -97,6 +106,43 @@ async function doCopy(text) {
   else toast(t('detail.copyFailed'), 'error')
 }
 
+/** Delete one object through the console API. */
+async function removeObj(o) {
+  if (!confirm(t('detail.confirmDelete', { key: o.key }))) return
+  try {
+    await api.del(
+      `/api/buckets/${encodeURIComponent(props.name)}/objects?key=${encodeURIComponent(o.key)}`,
+    )
+    toast(t('detail.deleted', { key: o.key }), 'ok')
+    await load()
+  } catch (e) {
+    toast(e.message, 'error', 6000)
+  }
+}
+
+/** Download (or open) an object via the session-authenticated endpoint. */
+function openObject(o, download) {
+  const q = new URLSearchParams({ key: o.key })
+  if (download) q.set('download', '1')
+  window.open(`/api/buckets/${encodeURIComponent(props.name)}/object?${q}`, '_blank', 'noopener')
+}
+
+/** Whether the browser can render this type inline usefully. */
+function canPreview(o) {
+  const ct = (o.content_type || '').toLowerCase()
+  return (
+    ct.startsWith('image/') ||
+    ct.startsWith('text/') ||
+    ct === 'application/pdf' ||
+    ct.startsWith('video/') ||
+    ct.startsWith('audio/')
+  )
+}
+
+async function onUploaded() {
+  await load()
+}
+
 watch(() => props.name, load)
 onMounted(load)
 </script>
@@ -125,6 +171,30 @@ onMounted(load)
   </div>
 
   <div v-if="error" class="alert error">{{ error }}</div>
+
+  <div class="card" v-if="bucket">
+    <div class="card-head">
+      <h2>{{ t('upload.title') }}</h2>
+      <button class="small" @click="showUploader = !showUploader">
+        {{ showUploader ? t('detail.dismiss') : t('upload.dropTitle') }}
+      </button>
+    </div>
+    <Uploader
+      v-if="showUploader"
+      :bucket="name"
+      :prefix="prefix"
+      :max-bytes="limits.max_object_bytes"
+      :part-bytes="limits.part_bytes"
+      :access-keys="keys"
+      @uploaded="onUploaded"
+    />
+    <p v-else class="dim" style="margin: 0">
+      {{ t('upload.howTo') }}
+      <span v-if="limits.max_object_bytes">
+        {{ t('upload.limitNote', { max: bytes(limits.max_object_bytes) }) }}
+      </span>
+    </p>
+  </div>
 
   <div class="card" v-if="bucket">
     <div class="card-head">
@@ -168,12 +238,19 @@ onMounted(load)
           <td></td>
         </tr>
         <tr v-for="o in objects" :key="o.key">
-          <td class="mono truncate" :title="o.key">{{ o.key }}</td>
+          <td class="mono truncate" :title="o.key">
+            <a href="#" @click.prevent="openObject(o, false)">{{ o.key }}</a>
+          </td>
           <td class="muted">{{ o.content_type }}</td>
           <td class="num">{{ bytes(o.size) }}</td>
           <td class="muted">{{ dateTime(o.last_modified) }}</td>
           <td class="row end">
+            <button v-if="canPreview(o)" class="small ghost" @click="openObject(o, false)">
+              {{ t('detail.preview') }}
+            </button>
+            <button class="small ghost" @click="openObject(o, true)">{{ t('detail.download') }}</button>
             <button class="small" @click="makePresigned(o)">{{ t('detail.share') }}</button>
+            <button class="small danger" @click="removeObj(o)">{{ t('detail.delete') }}</button>
           </td>
         </tr>
       </tbody>

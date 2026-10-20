@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, state, toast } from '../store.js'
 import { t } from '../i18n.js'
+import { bytes } from '../format.js'
 
 const origin = window.location.origin
 
@@ -14,11 +15,50 @@ const busy = ref(false)
 const error = ref('')
 const overview = ref(null)
 
+// --- upload limits -----------------------------------------------------------
+const MiB = 1024 * 1024
+const limits = ref(null)
+const unlimited = ref(false)
+const maxMiB = ref(5120)
+const partMiB = ref(8)
+const savingLimits = ref(false)
+const limitsError = ref('')
+
+function loadLimits(doc) {
+  limits.value = doc
+  unlimited.value = doc.max_object_bytes == null
+  maxMiB.value = doc.max_object_bytes ? Math.round(doc.max_object_bytes / MiB) : 5120
+  partMiB.value = Math.round(doc.part_bytes / MiB)
+}
+
+async function saveLimits() {
+  limitsError.value = ''
+  savingLimits.value = true
+  try {
+    const payload = {
+      max_object_bytes: unlimited.value ? null : Math.max(1, Math.round(Number(maxMiB.value))) * MiB,
+      part_bytes: Math.round(Number(partMiB.value)) * MiB,
+    }
+    const saved = await api.patch('/api/settings/limits', payload)
+    loadLimits(saved)
+    toast(t('limits.saved'), 'ok')
+  } catch (e) {
+    limitsError.value = e.message || t('limits.saveFailed')
+  } finally {
+    savingLimits.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     overview.value = await api.get('/api/overview')
   } catch {
     /* non-fatal */
+  }
+  try {
+    loadLimits(await api.get('/api/settings/limits'))
+  } catch {
+    /* the card stays hidden if the endpoint is unavailable */
   }
 })
 
@@ -89,6 +129,61 @@ async function changePassword() {
         <div class="mono" style="word-break: break-all">{{ overview.data_dir }}</div>
       </div>
     </div>
+  </div>
+
+  <div class="card" v-if="limits">
+    <div class="card-head"><h2>{{ t('limits.title') }}</h2></div>
+    <p class="dim" style="margin-top: 0">{{ t('limits.subtitle') }}</p>
+    <div v-if="limitsError" class="alert error">{{ limitsError }}</div>
+    <form style="max-width: 520px" @submit.prevent="saveLimits">
+      <label class="field">
+        <span>{{ t('limits.maxObject') }}</span>
+        <div class="row" style="gap: 8px">
+          <input
+            v-model.number="maxMiB"
+            type="number"
+            min="1"
+            step="1"
+            :disabled="unlimited"
+            style="max-width: 160px"
+          />
+          <span class="hint">MiB</span>
+          <label class="row" style="gap: 5px">
+            <input v-model="unlimited" type="checkbox" style="width: auto" />
+            {{ t('limits.unlimited') }}
+          </label>
+        </div>
+        <div class="hint">{{ t('limits.maxObjectHint') }}</div>
+      </label>
+      <label class="field">
+        <span>{{ t('limits.partSize') }}</span>
+        <div class="row" style="gap: 8px">
+          <input
+            v-model.number="partMiB"
+            type="number"
+            min="5"
+            max="512"
+            step="1"
+            style="max-width: 160px"
+          />
+          <span class="hint">MiB</span>
+        </div>
+        <div class="hint">{{ t('limits.partSizeHint') }}</div>
+      </label>
+      <button class="primary" type="submit" :disabled="savingLimits">
+        {{ savingLimits ? t('limits.saving') : t('limits.save') }}
+      </button>
+      <p class="hint">
+        {{
+          t('limits.current', {
+            max: limits.max_object_bytes
+              ? bytes(limits.max_object_bytes)
+              : t('limits.unlimitedValue'),
+            part: bytes(limits.part_bytes),
+          })
+        }}
+      </p>
+    </form>
   </div>
 
   <div class="card">
