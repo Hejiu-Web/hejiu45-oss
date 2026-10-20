@@ -1,4 +1,4 @@
-//! S3 object and bucket operations.
+﻿//! S3 object and bucket operations.
 //!
 //! ## Authentication
 //!
@@ -30,7 +30,7 @@ use crate::meta::{
 };
 use crate::s3::query::S3Query;
 use crate::s3::xml::{self, XmlReader};
-use crate::state::{AppState, now_rfc3339};
+use crate::state::{AppState, RawPath, now_rfc3339};
 
 /// Everything the handlers need about one request, resolved in one place.
 pub struct S3Request {
@@ -45,8 +45,19 @@ pub struct S3Request {
 impl S3Request {
     /// Verify the signature of an incoming request.
     pub fn authenticate(state: &AppState, req: &Request) -> Result<Self, S3Error> {
-        let raw_path = req.uri().path().to_string();
-        let raw_query = req.uri().query().unwrap_or("").to_string();
+        // `nest` strips the S3 mount prefix before routing, so `req.uri()`
+        // holds `/bucket/key`. SigV4 signs the full request target, which is
+        // captured by `capture_raw_path` before the router rewrites it.
+        let raw_path = req
+            .extensions()
+            .get::<RawPath>()
+            .map(|r| r.path.clone())
+            .unwrap_or_else(|| req.uri().path().to_string());
+        let raw_query = req
+            .extensions()
+            .get::<RawPath>()
+            .map(|r| r.query.clone())
+            .unwrap_or_else(|| req.uri().query().unwrap_or("").to_string());
         let headers = req.headers().clone();
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let ctx = AuthContext {
@@ -659,6 +670,7 @@ pub fn collect_stored_headers(headers: &HeaderMap) -> std::collections::BTreeMap
         })
         .collect()
 }
+
 
 
 

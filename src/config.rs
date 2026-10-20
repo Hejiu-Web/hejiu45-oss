@@ -1,4 +1,4 @@
-//! Command-line surface and runtime configuration.
+﻿//! Command-line surface and runtime configuration.
 //!
 //! Every option has an environment-variable equivalent so the same binary
 //! works for `myoss --flag`, `MYOSS_FLAG=1 myoss` and `--config file.toml`.
@@ -88,6 +88,13 @@ pub struct Args {
     #[arg(long, env = "HEJIU45_OSS_MASTER_KEY")]
     pub master_key: Option<String>,
 
+    /// URL prefix the S3 API is served under. The console owns `/`, so S3
+    /// lives under `/s3` by default. Set to empty for S3-at-root deployments
+    /// (a dedicated host or port); path-style addressing is required either
+    /// way.
+    #[arg(long, env = "HEJIU45_OSS_S3_PREFIX", default_value = "/s3")]
+    pub s3_prefix: String,
+
     /// Region reported by the S3 API.
     #[arg(long, env = "HEJIU45_OSS_REGION", default_value = "us-east-1")]
     pub region: String,
@@ -146,6 +153,10 @@ impl Args {
         if let Some(p) = &args.public_url {
             args.public_url = Some(p.trim_end_matches('/').to_string());
         }
+        // Normalise: "" or "/" means root, otherwise "/prefix" without a
+        // trailing slash.
+        let p = args.s3_prefix.trim().trim_end_matches('/').to_string();
+        args.s3_prefix = if p == "/" { String::new() } else { p };
         if args.tls == TlsMode::Manual {
             if args.tls_cert.is_none() || args.tls_key.is_none() {
                 anyhow::bail!("`--tls manual` requires both --tls-cert and --tls-key");
@@ -202,4 +213,5 @@ mod tests {
         assert!(!a.secure_cookies());
     }
 }
+
 

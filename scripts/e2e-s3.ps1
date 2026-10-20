@@ -1,4 +1,4 @@
-# End-to-end S3 compatibility test for hejiu45-oss.
+﻿# End-to-end S3 compatibility test for hejiu45-oss.
 #
 # Signs real SigV4 requests and asserts responses. Works on Windows PowerShell
 # 5.1 and PowerShell 7: HTTP goes through curl.exe so behaviour does not depend
@@ -12,7 +12,9 @@ param(
     [string]$Base = "http://127.0.0.1:9000",
     [string]$AccessKey = $env:HEJIU45_OSS_AK,
     [string]$SecretKey = $env:HEJIU45_OSS_SK,
-    [string]$Region = "us-east-1"
+    [string]$Region = "us-east-1",
+    # The console owns `/`, so S3 is served under a prefix by default.
+    [string]$Prefix = "/s3"
 )
 
 $ErrorActionPreference = "Stop"
@@ -44,6 +46,7 @@ function Get-SignedRequest {
     $dateStamp = $now.ToString("yyyyMMdd")
     $payloadHash = SHA256-Hex $Body
     $hostHeader = ([uri]$Base).Authority
+    # SigV4 signs the full path including the S3 mount prefix.
 
     $hdrs = [ordered]@{}
     foreach ($k in $Extra.Keys) { $hdrs[$k.ToLower()] = "$($Extra[$k])" }
@@ -115,7 +118,7 @@ function Invoke-Signed {
     } else {
         $bytes = [byte[]]@($BodyBytes)
     }
-    $req = Get-SignedRequest -Method $Method -Path $Path -Query $Query -Extra $Extra -Body $bytes
+    $req = Get-SignedRequest -Method $Method -Path ($Prefix + $Path) -Query $Query -Extra $Extra -Body $bytes
     $headerArgs = @()
     foreach ($k in $req.Headers.Keys) {
         if ($k -eq "host") { continue }
@@ -262,21 +265,21 @@ Check "Multipart upload round-trip" {
     if ($h.Headers["content-length"] -ne "2048") { throw "size $($h.Headers['content-length'])" }
 }
 Check "Unsigned request -> 403" {
-    $code = & $curl -s -o NUL -w "%{http_code}" "$Base/$bucket/x.txt"
+    $code = & $curl -s -o NUL -w "%{http_code}" "$Base$Prefix/$bucket/x.txt"
     if ($code -ne "403") { throw "status $code" }
 }
 Check "Tampered signature -> 403" {
-    $req = Get-SignedRequest -Method GET -Path "/$bucket/hello.txt"
+    $req = Get-SignedRequest -Method GET -Path "$Prefix/$bucket/hello.txt"
     $auth = $req.Headers["authorization"] -replace "([0-9a-f]{64})$", ("0" * 63 + $(if ($req.Signature[-1] -eq "0") { "1" } else { "0" }))
-    $code = & $curl -s -o NUL -w "%{http_code}" -H "authorization: $auth" -H "x-amz-date: $($req.Headers['x-amz-date'])" -H "x-amz-content-sha256: $($req.Headers['x-amz-content-sha256'])" -H "host: $($req.Headers['host'])" "$Base/$bucket/hello.txt"
+    $code = & $curl -s -o NUL -w "%{http_code}" -H "authorization: $auth" -H "x-amz-date: $($req.Headers['x-amz-date'])" -H "x-amz-content-sha256: $($req.Headers['x-amz-content-sha256'])" -H "host: $($req.Headers['host'])" "$Base$Prefix/$bucket/hello.txt"
     if ($code -ne "403") { throw "status $code" }
 }
 Check "Declared body hash mismatch -> 400" {
     # Sign with the hash of "" (empty) but send a different body.
-    $req = Get-SignedRequest -Method PUT -Path "/$bucket/mismatch.txt" -Body ([byte[]]@())
+    $req = Get-SignedRequest -Method PUT -Path "$Prefix/$bucket/mismatch.txt" -Body ([byte[]]@())
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, "not empty")
-    $code = & $curl -s -o NUL -w "%{http_code}" -X PUT --data-binary "@$tmp" -H "authorization: $($req.Headers['authorization'])" -H "x-amz-date: $($req.Headers['x-amz-date'])" -H "x-amz-content-sha256: $($req.Headers['x-amz-content-sha256'])" "$Base/$bucket/mismatch.txt"
+    $code = & $curl -s -o NUL -w "%{http_code}" -X PUT --data-binary "@$tmp" -H "authorization: $($req.Headers['authorization'])" -H "x-amz-date: $($req.Headers['x-amz-date'])" -H "x-amz-content-sha256: $($req.Headers['x-amz-content-sha256'])" "$Base$Prefix/$bucket/mismatch.txt"
     Remove-Item $tmp -ErrorAction SilentlyContinue
     if ($code -ne "400") { throw "status $code" }
 }
@@ -305,6 +308,7 @@ if ($failCount -gt 0) {
 }
 Write-Host "All S3 end-to-end checks passed" -ForegroundColor Green
 exit 0
+
 
 
 
