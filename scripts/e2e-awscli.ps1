@@ -260,7 +260,12 @@ Check "s3api delete-objects (batch)" {
 Check "presign then GET without credentials" {
     $url = (& $aws s3 presign "s3://$bucket/small.txt" --expires-in 300 @S3).Trim()
     if (-not $url) { throw "no URL returned" }
-    $body = & curl.exe -s --fail "$url"
+    # Use the real `curl` binary, not the shell alias: `curl.exe` is
+    # Windows-only and this script also runs on Linux CI runners.
+    $curl = (Get-Command curl -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1).Source
+    if (-not $curl) { throw "curl not found on PATH" }
+    $body = & $curl -s --fail "$url"
     if ($LASTEXITCODE -ne 0) { throw "GET on presigned URL failed" }
     if ($body -ne "hello from the aws cli") { throw "body '$body'" }
 }
