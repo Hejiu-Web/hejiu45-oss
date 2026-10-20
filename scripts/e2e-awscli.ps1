@@ -29,6 +29,7 @@ if ($awsCmd) {
         "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
     ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 }
+$script:awsBin = $aws
 if (-not $aws -or -not (Test-Path $aws)) {
     Write-Host "aws CLI not found on PATH" -ForegroundColor Red
     exit 2
@@ -41,7 +42,10 @@ $env:AWS_EC2_METADATA_DISABLED = "true"
 # Credentials come from the environment (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY),
 # which every AWS SDK reads first. A private config file is used only for the
 # one setting the CLI cannot take from the environment: path-style addressing.
-$configRoot = Join-Path $env:TEMP ("hj45-aws-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+$configRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("hj45-aws-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+# Script scope: helpers resolve these from their own scope on every PowerShell
+# version, which a plain local assignment would not survive.
+$script:workDir = Join-Path $configRoot "work"
 New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
 $env:AWS_CONFIG_FILE = Join-Path $configRoot "config"
 & $aws configure set default.s3.addressing_style path 2>&1 | Out-Null
@@ -135,7 +139,7 @@ function CheckFails([string]$Name, [scriptblock]$Test, [string]$ExpectPattern) {
 }
 
 $bucket = "cli-" + ([guid]::NewGuid().ToString("N").Substring(0, 10))
-$work = Join-Path $configRoot "work"
+$work = $script:workDir
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 Write-Host "AWS CLI $(& $aws --version 2>&1) against $Endpoint (bucket $bucket)" -ForegroundColor Cyan
@@ -150,7 +154,14 @@ Check "s3 ls (list buckets)" {
 # --- uploads ---------------------------------------------------------------
 $small = Join-Path $work "small.txt"
 Set-Content -Path $small -Value "hello from the aws cli" -NoNewline -Encoding utf8
-Check "s3 cp (single PUT)" { & $aws s3 cp $small "s3://$bucket/small.txt" @S3 | Out-Null }
+Check "s3 cp (single PUT)" {
+    & $aws s3 cp $small "s3://$bucket/small.txt" @S3 | Out-Null
+    # Verify the object really exists: a CLI exit status alone is not evidence.
+    $h = & $aws s3api head-object --bucket $bucket --key small.txt @S3 | ConvertFrom-Json
+    if ([int64]$h.ContentLength -ne (Get-Item $small).Length) {
+        throw "HeadObject after cp: size $($h.ContentLength)"
+    }
+}
 
 
 # `s3 cp DIR s3://b/prefix/ --recursive` copies the *contents* of DIR under
@@ -180,7 +191,13 @@ for ($i = 0; $i -lt 20; $i++) {
 $fs.Close()
 $bigSize = (Get-Item $big).Length
 Write-Host ("  (multipart test file: {0:N1} MB)" -f ($bigSize / 1MB)) -ForegroundColor DarkGray
-Check "s3 cp (multipart upload, 20 MiB)" { & $aws s3 cp $big "s3://$bucket/big.bin" @S3 | Out-Null }
+Check "s3 cp (multipart upload, 20 MiB)" {
+    & $aws s3 cp $big "s3://$bucket/big.bin" @S3 | Out-Null
+    $h = & $aws s3api head-object --bucket $bucket --key big.bin @S3 | ConvertFrom-Json
+    if ([int64]$h.ContentLength -ne $bigSize) {
+        throw "HeadObject after multipart cp: size $($h.ContentLength) != $bigSize"
+    }
+}
 Check "s3api head-object size matches" {
     $h = & $aws s3api head-object --bucket $bucket --key big.bin @S3 | ConvertFrom-Json
     if ([int64]$h.ContentLength -ne $bigSize) { throw "size $($h.ContentLength) != $bigSize" }
