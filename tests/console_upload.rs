@@ -93,6 +93,15 @@ impl Ctx {
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
+        // Point the state's advertised URL at the port we actually bound:
+        // presigned URLs sign the Host header, so a deployment sets
+        // `--public-url` and the test must do the equivalent.
+        let mut args = state.args.as_ref().clone();
+        args.public_url = Some(format!("http://{addr}"));
+        let state = AppState {
+            args: Arc::new(args),
+            ..state.clone()
+        };
         let router = build_router(state.clone());
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -578,4 +587,76 @@ async fn upload_requires_a_session() {
         .json_send("PATCH", "/api/settings/limits", r#"{"part_bytes":8388608}"#)
         .await;
     assert_eq!(st, 401, "anonymous limit change must be rejected");
+}
+
+/// A presigned URL minted by the console must point at the path the router
+/// actually serves S3 from.
+///
+/// Regression: the signature was computed over `/{bucket}/{key}` while S3 is
+/// mounted under `/s3`, so the returned URL fell through to the SPA fallback and
+/// answered with the console HTML instead of the object.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn console_presign_url_includes_the_s3_prefix() {
+    let ctx = Ctx::start().await;
+    ctx.make_bucket("share").await;
+
+    let payload = b"share me";
+    let (st, _) = ctx.upload("share", "pic.png", payload, "image/png").await;
+    assert_eq!(st, 200);
+
+    // The default prefix is `/s3`; the test harness does not override it.
+    let assert_prefix = ctx.state.args.s3_prefix.clone();
+    assert_eq!(assert_prefix, "/s3", "test assumes the default prefix");
+
+    // Create an access key with read access, then presign through the console.
+    let (st, _, body) = ctx
+        .json_send("POST", "/api/keys", r#"{"label":"sharer"}"#)
+        .await;
+    assert!((200..300).contains(&st), "create key: {st}");
+    let key: serde_json::Value = serde_json::from_slice(&body).expect("key json");
+    let ak = key["access_key_id"].as_str().expect("ak").to_string();
+
+    let (st, _, _) = ctx
+        .json_send(
+            "PUT",
+            &format!("/api/keys/{ak}/grants"),
+            r#"{"grants":[{"bucket":"share","read":true,"write":false}]}"#,
+        )
+        .await;
+    assert_eq!(st, 200, "grant read");
+
+    let (st, _, body) = ctx
+        .json_send(
+            "POST",
+            "/api/buckets/share/objects/presign?key=pic.png",
+            &format!(r#"{{"access_key_id":"{ak}","ttl_seconds":300}}"#),
+        )
+        .await;
+    assert_eq!(st, 200, "presign: {}", String::from_utf8_lossy(&body));
+    let signed: serde_json::Value = serde_json::from_slice(&body).expect("presign json");
+    let url = signed["url"].as_str().expect("url").to_string();
+
+    // The signed path must carry the mount prefix, not the bare bucket path.
+    assert!(
+        url.contains("/s3/share/pic.png"),
+        "presigned URL must be signed for the mounted S3 path, got: {url}"
+    );
+    assert!(
+        !url.contains("//share/pic.png"),
+        "presigned URL must not sign the bare bucket path, got: {url}"
+    );
+
+    // And the object must actually be fetchable through that URL.
+    let path_and_query = url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|i| &rest[i..]))
+        .expect("path in url");
+    let (st, _, got) = ctx.send("GET", path_and_query, &[], None).await;
+    assert_eq!(
+        st,
+        200,
+        "presigned GET must serve the object, not the SPA; url={url} body={}",
+        String::from_utf8_lossy(&got)
+    );
+    assert_eq!(got, payload, "presigned GET must return the object bytes");
 }

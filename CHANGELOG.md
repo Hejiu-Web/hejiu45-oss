@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-10-22
+
+### Fixed
+
+- **Presigned URLs from the console ignored the S3 mount prefix.** The signature
+  was computed over `/{bucket}/{key}` while the S3 API is served under `/s3`, so
+  a shared link pointed at a path the router did not recognise. The request fell
+  through to the SPA fallback and answered with the console HTML (200) instead of
+  the object, which looks like "the link does not work" with no error. The signed
+  path now includes `--s3-prefix`, and a regression test fetches the object
+  through the generated URL to prove it serves bytes rather than HTML.
+
+### Added
+
+- `docs/DEPLOY-LINUX.md`: a deployment guide covering manual install, custom
+  paths, nginx, backup/restore, upgrades, and recovery from a lost admin
+  password.
 ## [0.2.0] — 2026-10-20
 
 Browser uploads, editable upload limits, and a bilingual console.
@@ -65,5 +82,6 @@ embedded Vue 3 console, SigV4 verification, AES-256-GCM envelope encryption for
 access-key secrets, server-side sessions, per-key bucket grants, an audit log,
 TLS in-process or behind a reverse proxy, and checksum-verified installers.
 
+[0.2.1]: https://github.com/Hejiu-Web/hejiu45-oss/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Hejiu-Web/hejiu45-oss/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Hejiu-Web/hejiu45-oss/releases/tag/v0.1.0

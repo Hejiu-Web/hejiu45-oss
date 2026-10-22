@@ -26,7 +26,7 @@ async function signOut() {
         <div class="brand-mark">HJ</div>
         <div>
           <div class="brand-name">hejiu45-oss</div>
-          <div class="brand-ver">v{{ state.info?.version || '0.2.0' }}</div>
+          <div class="brand-ver">v{{ state.info?.version || '0.2.1' }}</div>
         </div>
       </div>
 

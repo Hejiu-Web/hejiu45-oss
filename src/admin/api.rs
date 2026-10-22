@@ -870,7 +870,20 @@ pub async fn presign_object(
         })
         .collect::<Vec<_>>()
         .join("/");
-    let path = format!("/{}/{}", name, encoded_key);
+    // The signed path must be the path the client will actually request,
+    // including the S3 mount prefix. Signing `/{bucket}/{key}` while the router
+    // serves S3 under `/s3` produced URLs that fell through to the SPA fallback
+    // and returned the console HTML instead of the object.
+    let path = if st.args.s3_prefix.is_empty() {
+        format!("/{}/{}", name, encoded_key)
+    } else {
+        format!(
+            "{}/{}/{}",
+            st.args.s3_prefix.trim_end_matches('/'),
+            name,
+            encoded_key
+        )
+    };
     let url = st
         .auth
         .presign(
