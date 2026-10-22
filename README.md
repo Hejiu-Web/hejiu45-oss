@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)](https://www.rust-lang.org)
 
-[English](#english) · [中文](#中文) · [Changelog](CHANGELOG.md)
+[English](#english) · [中文](#中文) · [Changelog](CHANGELOG.md) · [部署指南](docs/DEPLOY-LINUX.md)
 
 </div>
 
@@ -98,6 +98,9 @@ S3 密钥泄露也登不进控制台。
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Hejiu-Web/hejiu45-oss/main/install-linux.sh | sudo bash
 ```
+
+完整步骤（手动部署、自定义路径、Nginx 反代、备份恢复、故障排查）见
+[**Linux 部署指南**](docs/DEPLOY-LINUX.md)。
 
 自动完成：下载静态二进制并校验 SHA-256 → 安装到 `/usr/local/bin` →
 创建系统用户与 `/var/lib/hejiu45-oss` → 生成主密钥 → 写入加固的 systemd
