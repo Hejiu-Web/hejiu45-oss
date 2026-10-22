@@ -285,8 +285,47 @@ const messages = {
     'detail.min15': '15 minutes',
     'detail.hour1': '1 hour',
     'detail.day1': '1 day',
+    'detail.day7': '7 days (maximum)',
+    'detail.lifetimeHint':
+      'Private objects expire; S3 presigned URLs cannot exceed 7 days. Make the bucket public for permanent links.',
+    'detail.sharePrivateLead':
+      'This bucket is private, so shared links must be signed and expire. Pick a key with read access and a lifetime.',
+    'detail.makePublicTip': 'Want a permanent link instead?',
+    'detail.publicLinkReady': 'Permanent public link ready — copy it now.',
+    'detail.publicLinkCopied': 'Public link copied.',
     'detail.shareHint':
       'Click Share on a row above to mint a short-lived presigned URL. No permanent public links are ever created.',
+
+    // --- public access + custom domain ---
+    'domain.publicTitle': 'Public access',
+    'domain.publicLead':
+      'This bucket is public-read: anyone with the URL can download objects. No key, no signature, no expiry.',
+    'domain.publicExample': 'Any object is reachable at',
+    'domain.bind': 'Custom domain',
+    'domain.bindHint':
+      'Serve this bucket at the root of your own hostname. Point a CNAME at this server first.',
+    'domain.save': 'Save domain',
+    'domain.saving': 'Saving…',
+    'domain.clear': 'Remove binding',
+    'domain.saved': 'Custom domain saved.',
+    'domain.cleared': 'Custom domain removed.',
+    'domain.active': 'Active: {host}',
+
+    // --- access guide ---
+    'guide.title': 'Connect your code',
+    'guide.badge': 'S3 · SigV4',
+    'guide.lead':
+      'Endpoint, bucket and region are filled in. Paste a snippet or download a config file.',
+    'guide.whichKey': 'Access key to embed in the snippets',
+    'guide.secretHint':
+      'The secret is never shown again after creation, so snippets use a placeholder unless you just created a key.',
+    'guide.copySnippet': 'Copy snippet',
+    'guide.downloadAws': 'Download ~/.aws config',
+    'guide.downloadEnv': 'Download .env',
+    'guide.region': 'Region',
+    'guide.pathStyle': 'Path-style',
+    'guide.publicPrefix': 'Public URL prefix',
+    'guide.oneFileExample': 'A single object:',
     'detail.copyUrl': 'Copy URL',
     'detail.dismiss': 'Dismiss',
     'detail.created': 'created {when}',
@@ -552,8 +591,45 @@ const messages = {
     'detail.min15': '15 分钟',
     'detail.hour1': '1 小时',
     'detail.day1': '1 天',
+    'detail.day7': '7 天（上限）',
+    'detail.lifetimeHint':
+      '私有对象的链接会过期；S3 预签名 URL 最长 7 天。需要永久链接请把桶改为公开读。',
+    'detail.sharePrivateLead':
+      '这是私有桶，分享链接必须签名且会过期。请选择有读权限的密钥和有效期。',
+    'detail.makePublicTip': '想要永久链接？',
+    'detail.publicLinkReady': '永久公开链接已生成，可以直接复制。',
+    'detail.publicLinkCopied': '公开链接已复制。',
     'detail.shareHint':
       '在上方表格里点击「分享」，即可生成短时效的预签名 URL。系统不会创建永久公开链接。',
+
+    // --- public access + custom domain ---
+    'domain.publicTitle': '公开访问',
+    'domain.publicLead':
+      '这个桶是公开读的：拿到 URL 的任何人都能下载文件。不需要密钥、不需要签名、不会过期。',
+    'domain.publicExample': '任一对象的访问地址形如',
+    'domain.bind': '自定义域名',
+    'domain.bindHint': '用自己的域名根路径提供这个桶。请先把 CNAME 指向本服务器。',
+    'domain.save': '保存域名',
+    'domain.saving': '正在保存…',
+    'domain.clear': '解除绑定',
+    'domain.saved': '自定义域名已保存。',
+    'domain.cleared': '自定义域名已解除。',
+    'domain.active': '已生效：{host}',
+
+    // --- access guide ---
+    'guide.title': '接入代码',
+    'guide.badge': 'S3 · SigV4',
+    'guide.lead': 'endpoint、桶名、区域都已填好。直接复制代码，或下载配置文件。',
+    'guide.whichKey': '代码中使用的访问密钥',
+    'guide.secretHint':
+      '密钥原文创建后不再显示，所以代码里用的是占位符（除非你刚创建了密钥）。',
+    'guide.copySnippet': '复制代码',
+    'guide.downloadAws': '下载 ~/.aws 配置',
+    'guide.downloadEnv': '下载 .env',
+    'guide.region': '区域',
+    'guide.pathStyle': 'path-style 寻址',
+    'guide.publicPrefix': '公开访问前缀',
+    'guide.oneFileExample': '单个对象：',
     'detail.copyUrl': '复制 URL',
     'detail.dismiss': '收起',
     'detail.created': '创建于 {when}',

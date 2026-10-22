@@ -55,7 +55,22 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 /// Final fallback: S3-prefixed paths get an S3 response, everything else the
-/// SPA shell.
+/// SPA shell — unless the request targets a publicly readable bucket.
+///
+/// ## Public short links
+///
+/// A `public-read` bucket is meant to be shared, and
+/// `https://host/s3/bucket/pic.png` is a worse link than
+/// `https://host/bucket/pic.png`. So an unmatched path whose first segment
+/// names a **public** bucket is served as an object read from that bucket.
+///
+/// This opens no new surface: exactly the same handler runs, with the same
+/// `public-read` check inside it. A private bucket's name in that position
+/// falls through to the SPA, which is indistinguishable from an unknown path —
+/// bucket names are not leaked to anonymous callers this way.
+///
+/// The S3 *API* (`/s3/...`) keeps its full error semantics, so a client that
+/// mistypes a URL still gets XML rather than HTML.
 async fn s3_or_spa(
     state: axum::extract::State<AppState>,
     req: axum::extract::Request,
@@ -66,7 +81,73 @@ async fn s3_or_spa(
     {
         return crate::s3::root(state, req).await;
     }
+
+    // Custom domain: the whole path is the object key of the bound bucket.
+    if let Some(bucket) = custom_domain_bucket(&state, &req) {
+        // Own the key so the borrow of `req` ends before it is moved.
+        let key = req.uri().path().trim_start_matches('/').to_string();
+        if !key.is_empty() {
+            return crate::s3::public_object(state, req, &bucket, &key).await;
+        }
+    }
+
+    // Short link: `/{bucket}/{key}` where the bucket is public.
+    if let Some((bucket, key)) = public_short_link(&state, req.uri().path()) {
+        return crate::s3::public_object(state, req, &bucket, &key).await;
+    }
+
     crate::web::static_handler(req.uri().clone()).await
+}
+
+/// Split `/{bucket}/{key}` and return it only when `bucket` exists **and** is
+/// publicly readable.
+fn public_short_link(state: &AppState, path: &str) -> Option<(String, String)> {
+    let rest = path.trim_start_matches('/');
+    let (bucket, key) = rest.split_once('/')?;
+    // Never shadow the console's own namespaces.
+    if bucket.is_empty() || bucket == "api" || bucket == "assets" {
+        return None;
+    }
+    if key.is_empty() {
+        return None;
+    }
+    let meta: crate::meta::BucketMeta = state
+        .meta
+        .get_json(crate::meta::BUCKETS, bucket)
+        .ok()
+        .flatten()?;
+    if meta.is_public_read() {
+        Some((bucket.to_string(), key.to_string()))
+    } else {
+        None
+    }
+}
+
+/// Resolve the bucket bound to this request's `Host`, if any.
+///
+/// The port is stripped so `cdn.example.com:443` matches `cdn.example.com`.
+fn custom_domain_bucket(
+    state: &AppState,
+    req: &axum::http::Request<axum::body::Body>,
+) -> Option<String> {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())?
+        .split(':')
+        .next()?
+        .to_ascii_lowercase();
+    if host.is_empty() {
+        return None;
+    }
+    let buckets: Vec<(String, crate::meta::BucketMeta)> = state
+        .meta
+        .scan_json(crate::meta::BUCKETS, None, 10_000)
+        .ok()?;
+    buckets
+        .into_iter()
+        .find(|(_, b)| !b.custom_domain.is_empty() && b.custom_domain.eq_ignore_ascii_case(&host))
+        .map(|(_, b)| b.name)
 }
 
 /// The S3 route table, mounted at [`crate::config::Args::s3_prefix`].

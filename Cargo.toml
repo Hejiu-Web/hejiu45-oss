@@ -1,6 +1,6 @@
 [package]
 name = "hejiu45-oss"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "A single-binary, S3-compatible object storage server with an embedded admin console"

@@ -258,6 +258,29 @@ fn http_date(rfc3339: &str) -> String {
         .unwrap_or_else(|| rfc3339.to_string())
 }
 
+/// Serve one object for an anonymous request (public short link or custom
+/// domain).
+///
+/// Delegates to the regular read path so `public-read` enforcement, `Range`,
+/// ETag and the download hardening headers are byte-for-byte the same as a
+/// SigV4 GET. There is no principal, so a non-public bucket answers
+/// `AccessDenied` — the correct outcome for a URL that was never meant to be
+/// shareable.
+pub(crate) async fn public_get(st: &AppState, req: Request, bucket: &str, key: &str) -> Response {
+    let s3 = S3Request {
+        method: Method::GET,
+        headers: req.headers().clone(),
+        query: crate::s3::query::S3Query::parse(""),
+        raw_path: req.uri().path().to_string(),
+        raw_query: String::new(),
+        principal: None,
+    };
+    match get_object(st, &s3, bucket, key, req.headers()).await {
+        Ok(r) => r,
+        Err(e) => e.into_response(),
+    }
+}
+
 async fn get_object(
     st: &AppState,
     s3: &S3Request,

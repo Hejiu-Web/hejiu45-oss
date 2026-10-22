@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-10-22
+
+Sharing a public object no longer means pasting a 300-character signed URL.
+
+### Added
+
+- **Public buckets get permanent, unsigned URLs.** A `public-read` bucket is
+  reachable at the short path `https://oss.example.com/{bucket}/{key}` — no key,
+  no signature, no expiry. The console shows the prefix with a copy button.
+- **Custom domain per bucket (CNAME).** Bind `cdn.example.com` to a bucket and
+  its objects are served at that hostname's root (`https://cdn.example.com/logo.svg`).
+  Hostnames are validated and cannot be bound to two buckets.
+- **Access guide in the console**: copy-ready snippets for aws-cli, boto3,
+  JavaScript (v3) and Go, with endpoint, region and bucket pre-filled; plus
+  one-click downloads of a `~/.aws` config pair and a `.env` file.
+- **7-day presign lifetime** for private buckets, with the UI stating that
+  permanent links require making the bucket public.
+
+### Changed
+
+- Presigned GET on a public bucket returns `{"url": ..., "permanent": true}`
+  instead of signing, because a signature there only shortens the link's life.
+  Private objects still return a signed URL.
+- The share panel splits by visibility: public buckets show the permanent
+  prefix and domain binding, private buckets show the signed-URL flow with a
+  shortcut to make the bucket public.
+
+### Fixed
+
+- **Object keys were percent-encoded too aggressively in generated URLs.**
+  `NON_ALPHANUMERIC` turned `.` into `%2E`, so `/img/pic.png` became
+  `/img/pic%2Epng` and no longer named the stored key. Paths now use the same
+  encoder as SigV4.
+
+### Security notes
+
+- Public short links do not widen the surface: the request runs the normal read
+  handler, so the `public-read` check still applies. A private bucket's name in
+  that position falls through to the SPA, so bucket names stay unguessable.
+- Anonymous writes are impossible regardless of visibility.
 ## [0.2.1] — 2026-10-22
 
 ### Fixed
@@ -82,6 +122,7 @@ embedded Vue 3 console, SigV4 verification, AES-256-GCM envelope encryption for
 access-key secrets, server-side sessions, per-key bucket grants, an audit log,
 TLS in-process or behind a reverse proxy, and checksum-verified installers.
 
+[0.3.0]: https://github.com/Hejiu-Web/hejiu45-oss/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Hejiu-Web/hejiu45-oss/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Hejiu-Web/hejiu45-oss/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Hejiu-Web/hejiu45-oss/releases/tag/v0.1.0

@@ -60,3 +60,18 @@ pub async fn object(
 ) -> Response {
     object::object_dispatch(State(st), path, req).await
 }
+
+/// Anonymous read of one object, for public short links and custom domains.
+///
+/// Runs the same handler as a signed `GET /{bucket}/{key}`, so the
+/// `public-read` check, `Range` support and download hardening headers all
+/// apply unchanged. The request carries no credentials, so any bucket that is
+/// not `public-read` ends in `AccessDenied` — which is the intended answer.
+pub async fn public_object(
+    State(st): State<AppState>,
+    req: Request,
+    bucket: &str,
+    key: &str,
+) -> Response {
+    object::public_get(&st, req, bucket, key).await
+}

@@ -256,6 +256,7 @@ fn init_access_key(
                 visibility: "private".to_string(),
                 object_count: 0,
                 total_bytes: 0,
+                custom_domain: String::new(),
             },
         };
         b.perms.insert(rec.access_key_id.clone(), BucketPerms::FULL);

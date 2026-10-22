@@ -154,11 +154,24 @@ impl Ctx {
         let mut stream = tokio::net::TcpStream::connect(self.addr)
             .await
             .expect("connect");
-        let mut req = format!("{method} {path} HTTP/1.1\r\nhost: {}\r\n", self.addr);
+        // A caller may override `Host` (custom-domain routing). Emitting the
+        // default first and the override second produced two Host headers, and
+        // the server read the first one.
+        let host_override = extra
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+            .map(|(_, v)| *v);
+        let host = host_override
+            .map(str::to_string)
+            .unwrap_or_else(|| self.addr.to_string());
+        let mut req = format!("{method} {path} HTTP/1.1\r\nhost: {host}\r\n");
         if !self.cookie.is_empty() {
             req.push_str(&format!("cookie: {}\r\n", self.cookie));
         }
         for (k, v) in extra {
+            if k.eq_ignore_ascii_case("host") {
+                continue;
+            }
             req.push_str(&format!("{k}: {v}\r\n"));
         }
         let len = body.map(|b| b.len()).unwrap_or(0);
@@ -659,4 +672,182 @@ async fn console_presign_url_includes_the_s3_prefix() {
         String::from_utf8_lossy(&got)
     );
     assert_eq!(got, payload, "presigned GET must return the object bytes");
+}
+
+// ---------------------------------------------------------------------------
+// Public access: short links, permanent URLs, custom domains
+// ---------------------------------------------------------------------------
+
+/// A `public-read` bucket is shareable at the short path, and the console hands
+/// back a permanent link instead of an expiring signature.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_bucket_serves_short_links_and_permanent_urls() {
+    let ctx = Ctx::start().await;
+    ctx.make_bucket("cdn").await;
+
+    let payload = b"public bytes";
+    let (st, _) = ctx.upload("cdn", "img/pic.png", payload, "image/png").await;
+    assert_eq!(st, 200);
+
+    // Private by default: the short path must NOT serve the object.
+    //
+    // It falls through to the SPA and answers 200 with the console HTML, which
+    // is deliberate: an anonymous caller cannot tell a private bucket from an
+    // unknown path, so bucket names are not enumerable.
+    let (_, _, body) = ctx.send("GET", "/cdn/img/pic.png", &[], None).await;
+    assert!(
+        !body.starts_with(payload),
+        "a private bucket must not leak object bytes on the short path"
+    );
+
+    // Flip to public-read.
+    let (st, _, body) = ctx
+        .json_send(
+            "PATCH",
+            "/api/buckets/cdn",
+            r#"{"visibility":"public-read"}"#,
+        )
+        .await;
+    assert_eq!(st, 200, "set public: {}", String::from_utf8_lossy(&body));
+
+    // Now the short link works, with no credentials and no signature.
+    let (st, headers, got) = ctx.send("GET", "/cdn/img/pic.png", &[], None).await;
+    assert_eq!(st, 200, "short link must serve a public object");
+    assert_eq!(got, payload, "short link returns the object bytes");
+    let ct = headers
+        .iter()
+        .find(|(k, _)| k == "content-type")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    assert_eq!(ct, "image/png");
+
+    // The console reports the permanent prefix for the bucket.
+    let (st, _, body) = ctx.json_send("GET", "/api/buckets", "").await;
+    assert_eq!(st, 200);
+    let listing: serde_json::Value = serde_json::from_slice(&body).expect("buckets json");
+    let bucket = listing["buckets"]
+        .as_array()
+        .and_then(|a| a.iter().find(|b| b["name"] == "cdn"))
+        .expect("cdn bucket in listing");
+    let prefix = bucket["public_url"].as_str().unwrap_or("");
+    assert!(
+        prefix.ends_with("/cdn/"),
+        "public_url must point at the short prefix, got: {prefix}"
+    );
+
+    // A presigned GET on a public bucket is answered with the permanent link.
+    let (st, _, body) = ctx
+        .json_send("POST", "/api/keys", r#"{"label":"k1"}"#)
+        .await;
+    assert!((200..300).contains(&st));
+    let key: serde_json::Value = serde_json::from_slice(&body).expect("key json");
+    let ak = key["access_key_id"].as_str().expect("ak").to_string();
+    // The key still needs read permission: making a bucket public does not
+    // authorize every key to act on its behalf.
+    let (st, _, _) = ctx
+        .json_send(
+            "PUT",
+            &format!("/api/keys/{ak}/grants"),
+            r#"{"grants":[{"bucket":"cdn","read":true,"write":false}]}"#,
+        )
+        .await;
+    assert_eq!(st, 200, "grant read");
+
+    let (st, _, body) = ctx
+        .json_send(
+            "POST",
+            "/api/buckets/cdn/objects/presign?key=img/pic.png",
+            &format!(r#"{{"access_key_id":"{ak}","ttl_seconds":300}}"#),
+        )
+        .await;
+    assert_eq!(st, 200, "presign: {}", String::from_utf8_lossy(&body));
+    let signed: serde_json::Value = serde_json::from_slice(&body).expect("presign json");
+    assert_eq!(
+        signed["permanent"].as_bool(),
+        Some(true),
+        "a public bucket must yield a permanent link: {signed}"
+    );
+    let url = signed["url"].as_str().expect("url");
+    assert!(
+        !url.contains("X-Amz-Signature"),
+        "permanent link must carry no signature: {url}"
+    );
+    assert!(url.contains("/cdn/img/pic.png"), "url: {url}");
+}
+
+/// A hostname bound to a bucket serves that bucket's objects at its root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn custom_domain_serves_bucket_at_root() {
+    let ctx = Ctx::start().await;
+    ctx.make_bucket("assets").await;
+
+    let payload = b"domain bytes";
+    let (st, _) = ctx
+        .upload("assets", "logo.svg", payload, "image/svg+xml")
+        .await;
+    assert_eq!(st, 200);
+
+    // Bind a hostname.
+    let (st, _, body) = ctx
+        .json_send(
+            "PATCH",
+            "/api/buckets/assets",
+            r#"{"visibility":"public-read","custom_domain":"cdn.example.com"}"#,
+        )
+        .await;
+    assert_eq!(st, 200, "bind domain: {}", String::from_utf8_lossy(&body));
+
+    // A request arriving with that Host resolves the whole path as the key,
+    // so `/logo.svg` on the domain is object `logo.svg` in the bucket.
+    let (st, _, got) = ctx
+        .send("GET", "/logo.svg", &[("host", "cdn.example.com")], None)
+        .await;
+    assert_eq!(
+        st,
+        200,
+        "custom domain must serve the object: {}",
+        String::from_utf8_lossy(&got)
+    );
+    assert_eq!(got, payload);
+
+    // A port in the Host header must not break matching.
+    let (st, _, _) = ctx
+        .send("GET", "/logo.svg", &[("host", "cdn.example.com:443")], None)
+        .await;
+    assert_eq!(st, 200, "Host with a port must still match");
+
+    // An unbound hostname falls through to the SPA, not to the object. It
+    // answers 200 with the console shell by design, so assert on the bytes.
+    let (_, _, body) = ctx
+        .send("GET", "/logo.svg", &[("host", "other.example.com")], None)
+        .await;
+    assert!(
+        !body.starts_with(payload),
+        "unbound host must not leak object bytes"
+    );
+
+    // A second bucket cannot claim the same hostname.
+    ctx.make_bucket("other").await;
+    let (st, _, body) = ctx
+        .json_send(
+            "PATCH",
+            "/api/buckets/other",
+            r#"{"custom_domain":"cdn.example.com"}"#,
+        )
+        .await;
+    assert_eq!(
+        st,
+        409,
+        "duplicate domain must be refused: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    // Malformed hostnames are rejected.
+    for bad in [
+        r#"{"custom_domain":"ftp://x.com"}"#,
+        r#"{"custom_domain":"localhost"}"#,
+    ] {
+        let (st, _, _) = ctx.json_send("PATCH", "/api/buckets/other", bad).await;
+        assert_eq!(st, 400, "must reject {bad}");
+    }
 }

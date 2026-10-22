@@ -350,6 +350,7 @@ async fn create_bucket(st: &AppState, s3: &S3Request, bucket: &str) -> Result<Re
         visibility: "private".to_string(),
         object_count: 0,
         total_bytes: 0,
+        custom_domain: String::new(),
     };
     st.meta
         .put_json(BUCKETS, bucket, &meta)

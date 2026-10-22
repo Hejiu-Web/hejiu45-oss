@@ -3,7 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api, toast } from '../store.js'
 import { bytes, copy, dateTime } from '../format.js'
 import { t } from '../i18n.js'
+import { state } from '../store.js'
 import Uploader from '../components/Uploader.vue'
+import AccessGuide from '../components/AccessGuide.vue'
 
 const props = defineProps({ name: { type: String, required: true } })
 
@@ -21,6 +23,21 @@ const showUploader = ref(false)
 const presignFor = ref('')
 const presignTtl = ref(900)
 const presigned = ref('')
+const domainDraft = ref('')
+const savingDomain = ref(false)
+
+/** Public base URL, falling back to the address the console was opened on. */
+const publicBase = computed(() => state.info?.public_url || window.location.origin)
+/** S3 endpoint as a client should use it. */
+const s3Endpoint = computed(() => `${publicBase.value.replace(/\/$/, '')}/s3`)
+/** Host part, for the CNAME instruction. */
+const endpointHost = computed(() => {
+  try {
+    return new URL(publicBase.value).hostname
+  } catch {
+    return 'your-oss-host'
+  }
+})
 
 const grants = computed(() => bucket.value?.grants || [])
 const readableKeys = computed(() => grants.value.filter((g) => g.read))
@@ -33,6 +50,7 @@ async function load() {
     bucket.value = (b.buckets || []).find((x) => x.name === props.name) || null
     keys.value = k.keys || []
     if (!bucket.value) throw new Error(t('detail.bucketNotFound'))
+    domainDraft.value = bucket.value.custom_domain || ''
     // Limits drive the uploader's part size and early size check.
     try {
       limits.value = await api.get('/api/settings/limits')
@@ -95,9 +113,41 @@ async function makePresigned(obj) {
       { access_key_id: presignFor.value, ttl_seconds: Number(presignTtl.value) },
     )
     presigned.value = r.url
-    toast(t('detail.urlReady'), 'ok')
+    // A public bucket answers with a permanent, unsigned link — say so, because
+    // "expires in 15 minutes" would be wrong there.
+    toast(r.permanent ? t('detail.publicLinkReady') : t('detail.urlReady'), 'ok')
   } catch (e) {
     toast(e.message, 'error')
+  }
+}
+
+/** The permanent URL for one object, when the bucket is public. */
+function publicUrlFor(key) {
+  const prefix = bucket.value?.public_url
+  if (!prefix) return ''
+  return prefix + key.split('/').map(encodeURIComponent).join('/')
+}
+
+async function copyPublicUrl(o) {
+  const url = publicUrlFor(o.key)
+  if (!url) return
+  if (await copy(url)) toast(t('detail.publicLinkCopied'), 'ok')
+  else toast(t('detail.copyFailed'), 'error')
+}
+
+/** Bind or clear the custom hostname for this bucket. */
+async function saveDomain(clear = false) {
+  savingDomain.value = true
+  try {
+    const body = { custom_domain: clear ? '' : domainDraft.value.trim() }
+    const updated = await api.patch(`/api/buckets/${encodeURIComponent(props.name)}`, body)
+    bucket.value = { ...bucket.value, ...updated }
+    domainDraft.value = updated.custom_domain || ''
+    toast(clear ? t('domain.cleared') : t('domain.saved'), 'ok')
+  } catch (e) {
+    toast(e.message, 'error', 7000)
+  } finally {
+    savingDomain.value = false
   }
 }
 
@@ -288,8 +338,62 @@ onMounted(load)
     </div>
   </div>
 
-  <div class="card" v-if="bucket">
+  <!-- Public access: permanent links, no signing, no expiry -->
+  <div class="card" v-if="bucket && bucket.visibility === 'public-read'">
+    <div class="card-head">
+      <h2>{{ t('domain.publicTitle') }}</h2>
+      <span class="badge ok">{{ t('buckets.visibility.public-read') }}</span>
+    </div>
+    <p class="dim" style="margin-top: 0">{{ t('domain.publicLead') }}</p>
+
+    <div class="public-prefix">
+      <code class="mono">{{ bucket.public_url }}</code>
+      <button class="small" type="button" @click="copyPublicUrl({ key: '' })">
+        {{ t('detail.copyUrl') }}
+      </button>
+    </div>
+    <p class="hint">
+      {{ t('domain.publicExample') }}
+      <code class="mono">{{ bucket.public_url }}{{ objects[0]?.key || 'your-file.png' }}</code>
+    </p>
+
+    <div class="domain-bind">
+      <label class="field" style="margin: 0">
+        <span>{{ t('domain.bind') }}</span>
+        <input
+          v-model="domainDraft"
+          placeholder="cdn.example.com"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+        <div class="hint">{{ t('domain.bindHint') }}</div>
+      </label>
+      <div class="row" style="margin-top: 10px">
+        <button class="small primary" type="button" :disabled="savingDomain" @click="saveDomain(false)">
+          {{ savingDomain ? t('domain.saving') : t('domain.save') }}
+        </button>
+        <button
+          v-if="bucket.custom_domain"
+          class="small ghost"
+          type="button"
+          :disabled="savingDomain"
+          @click="saveDomain(true)"
+        >
+          {{ t('domain.clear') }}
+        </button>
+      </div>
+      <p v-if="bucket.custom_domain" class="hint">
+        {{ t('domain.active', { host: bucket.custom_domain }) }}
+        <br />
+        DNS: <code class="mono">{{ bucket.custom_domain }} CNAME {{ endpointHost }}</code>
+      </p>
+    </div>
+  </div>
+
+  <!-- Private objects still need a signature -->
+  <div class="card" v-if="bucket && bucket.visibility !== 'public-read'">
     <div class="card-head"><h2>{{ t('detail.shareTitle') }}</h2></div>
+    <p class="dim" style="margin-top: 0">{{ t('detail.sharePrivateLead') }}</p>
     <div class="grid cols-3">
       <label class="field">
         <span>{{ t('detail.signingKey') }}</span>
@@ -307,12 +411,12 @@ onMounted(load)
           <option :value="900">{{ t('detail.min15') }}</option>
           <option :value="3600">{{ t('detail.hour1') }}</option>
           <option :value="86400">{{ t('detail.day1') }}</option>
+          <option :value="604800">{{ t('detail.day7') }}</option>
         </select>
+        <div class="hint">{{ t('detail.lifetimeHint') }}</div>
       </label>
     </div>
-    <p class="hint" style="margin-bottom: 12px">
-      {{ t('detail.shareHint') }}
-    </p>
+    <p class="hint" style="margin-bottom: 12px">{{ t('detail.shareHint') }}</p>
     <div v-if="presigned">
       <pre class="code">{{ presigned }}</pre>
       <div class="row" style="margin-top: 10px">
@@ -320,5 +424,21 @@ onMounted(load)
         <button class="small ghost" @click="presigned = ''">{{ t('detail.dismiss') }}</button>
       </div>
     </div>
+    <p class="hint">
+      {{ t('detail.makePublicTip') }}
+      <button class="small" type="button" style="margin-left: 6px" @click="toggleVisibility">
+        {{ t('detail.makePublic') }}
+      </button>
+    </p>
   </div>
+
+  <AccessGuide
+    v-if="bucket"
+    :bucket="name"
+    :endpoint="s3Endpoint"
+    :region="bucket.region || 'us-east-1'"
+    :keys="keys"
+    :public-prefix="bucket.public_url || ''"
+    :public-url="objects[0] && bucket.public_url ? bucket.public_url + objects[0].key : ''"
+  />
 </template>

@@ -445,6 +445,7 @@ mod tests {
             visibility: "private".into(),
             object_count: 0,
             total_bytes: 0,
+            custom_domain: String::new(),
         };
         b.perms.insert(ak.into(), perms);
         b

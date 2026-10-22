@@ -261,6 +261,10 @@ pub struct BucketView {
     pub object_count: u64,
     pub total_bytes: u64,
     pub grants: Vec<GrantView>,
+    /// Hostname serving this bucket at its root, empty when unset.
+    pub custom_domain: String,
+    /// Permanent URL prefix for a public bucket, empty when private.
+    pub public_url: String,
 }
 
 #[derive(Serialize)]
@@ -269,6 +273,32 @@ pub struct GrantView {
     pub label: String,
     pub read: bool,
     pub write: bool,
+}
+
+/// The permanent URL prefix a public bucket is reachable at.
+///
+/// Prefers the bound custom domain (shortest, most shareable), then the public
+/// base URL with the short `/{bucket}/` form. Empty for private buckets, whose
+/// objects need a signature.
+fn public_prefix(st: &AppState, b: &BucketMeta) -> String {
+    if !b.is_public_read() {
+        return String::new();
+    }
+    if !b.custom_domain.is_empty() {
+        let scheme = st
+            .args
+            .public_url
+            .as_deref()
+            .and_then(|u| u.split("://").next())
+            .unwrap_or("https");
+        return format!("{scheme}://{}/", b.custom_domain);
+    }
+    let base = st
+        .args
+        .public_url
+        .clone()
+        .unwrap_or_else(|| format!("http://{}", st.args.listen));
+    format!("{}/{}/", base.trim_end_matches('/'), b.name)
 }
 
 fn bucket_view(st: &AppState, b: &BucketMeta) -> BucketView {
@@ -295,6 +325,8 @@ fn bucket_view(st: &AppState, b: &BucketMeta) -> BucketView {
         visibility: b.visibility.clone(),
         object_count: b.object_count,
         total_bytes: b.total_bytes,
+        custom_domain: b.custom_domain.clone(),
+        public_url: public_prefix(st, b),
         grants,
     }
 }
@@ -353,6 +385,7 @@ pub async fn create_bucket(
         visibility: visibility.to_string(),
         object_count: 0,
         total_bytes: 0,
+        custom_domain: String::new(),
     };
     st.meta
         .put_json(BUCKETS, &b.name, &b)
@@ -370,6 +403,8 @@ pub async fn create_bucket(
 #[derive(Deserialize)]
 pub struct UpdateBucket {
     pub visibility: Option<String>,
+    /// Empty string clears the binding.
+    pub custom_domain: Option<String>,
 }
 
 /// `PATCH /api/buckets/{name}`
@@ -393,6 +428,29 @@ pub async fn update_bucket(
         }
         b.visibility = v;
     }
+    if let Some(domain) = body.custom_domain {
+        let domain = domain.trim().to_ascii_lowercase();
+        if !domain.is_empty() {
+            validate_custom_domain(&domain)?;
+            // One hostname must map to exactly one bucket, or routing would be
+            // ambiguous and the result would depend on iteration order.
+            let buckets: Vec<(String, BucketMeta)> = st
+                .meta
+                .scan_json(BUCKETS, None, 10_000)
+                .map_err(ApiError::internal)?;
+            for (other, ob) in &buckets {
+                if other != &name
+                    && !ob.custom_domain.is_empty()
+                    && ob.custom_domain.eq_ignore_ascii_case(&domain)
+                {
+                    return Err(ApiError::conflict(format!(
+                        "{domain} is already bound to bucket '{other}'."
+                    )));
+                }
+            }
+        }
+        b.custom_domain = domain;
+    }
     st.meta
         .put_json(BUCKETS, &name, &b)
         .map_err(ApiError::internal)?;
@@ -400,10 +458,44 @@ pub async fn update_bucket(
         &auth.user.username,
         "bucket.update",
         &name,
-        &b.visibility,
+        &format!("visibility={} domain={}", b.visibility, b.custom_domain),
         "",
     );
     Ok(Json(bucket_view(&st, &b)))
+}
+
+/// Reject hostnames the router could not match, and anything that is not a
+/// plain DNS name (no scheme, no path, no port).
+fn validate_custom_domain(domain: &str) -> Result<(), ApiError> {
+    if domain.contains("://") || domain.contains('/') || domain.contains(':') {
+        return Err(ApiError::bad_request(
+            "custom_domain must be a bare hostname such as cdn.example.com (no scheme, path or port).",
+        ));
+    }
+    if domain.len() > 253 {
+        return Err(ApiError::bad_request("custom_domain is too long."));
+    }
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.len() < 2 {
+        return Err(ApiError::bad_request(
+            "custom_domain must contain a dot, e.g. cdn.example.com.",
+        ));
+    }
+    for label in labels {
+        let ok = !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        if !ok {
+            return Err(ApiError::bad_request(format!(
+                "custom_domain has an invalid label: '{label}'."
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// `DELETE /api/buckets/{name}` — refuses non-empty buckets.
@@ -862,12 +954,11 @@ pub async fn presign_object(
         .clone()
         .unwrap_or_else(|| format!("http://{}", st.args.listen));
     let host = public.split("://").nth(1).unwrap_or(&public).to_string();
+    // Encode exactly the way SigV4 does for paths: `.` stays literal (encoding
+    // it as `%2E` produces a URL that does not name the stored key).
     let encoded_key = key
         .split('/')
-        .map(|seg| {
-            percent_encoding::utf8_percent_encode(seg, percent_encoding::NON_ALPHANUMERIC)
-                .to_string()
-        })
+        .map(crate::auth::sigv4::uri_encode_path)
         .collect::<Vec<_>>()
         .join("/");
     // The signed path must be the path the client will actually request,
@@ -884,6 +975,36 @@ pub async fn presign_object(
             encoded_key
         )
     };
+    // A public bucket needs no signature at all: hand back the permanent URL.
+    //
+    // This is the difference between "share this image with a friend" (a short
+    // stable link) and "authorize this request" (a signed, expiring URL). Only
+    // `public-read` buckets, and only for reads, can answer with a plain URL —
+    // a private object still requires a signature, and writes always do.
+    let is_get = body.method.as_deref() != Some("PUT");
+    if is_get && b.is_public_read() {
+        let encoded = key
+            .split('/')
+            .map(crate::auth::sigv4::uri_encode_path)
+            .collect::<Vec<_>>()
+            .join("/");
+        let public_link = format!("{}/{}/{}", public.trim_end_matches('/'), name, encoded);
+        st.meta.audit(
+            &auth.user.username,
+            "object.public_link",
+            &format!("{name}/{key}"),
+            &public_link,
+            "",
+        );
+        return Ok(Json(json!({
+            "url": public_link,
+            // No expiry: the URL is derived from bucket visibility, not a key.
+            "expires_at": serde_json::Value::Null,
+            "permanent": true,
+            "method": "GET",
+        })));
+    }
+
     let url = st
         .auth
         .presign(
@@ -912,7 +1033,12 @@ pub async fn presign_object(
         &url.expires_at,
         "",
     );
-    Ok(Json(url))
+    Ok(Json(json!({
+        "url": url.url,
+        "expires_at": url.expires_at,
+        "permanent": false,
+        "method": if body.method.as_deref() == Some("PUT") { "PUT" } else { "GET" },
+    })))
 }
 
 // ---------------------------------------------------------------------------

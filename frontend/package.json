@@ -1,7 +1,7 @@
 {
   "name": "hejiu45-oss-console",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "Embedded admin console for hejiu45-oss (Vue 3, plain JavaScript)",
   "scripts": {

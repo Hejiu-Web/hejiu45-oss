@@ -155,6 +155,31 @@ pub struct BucketMeta {
     pub object_count: u64,
     #[serde(default)]
     pub total_bytes: u64,
+    /// Optional hostname that serves this bucket at its root, e.g.
+    /// `cdn.example.com`. Requests whose `Host` matches are routed to the
+    /// bucket as if the path had no bucket segment (`/foo.png` -> `foo.png`).
+    ///
+    /// DNS is the operator's responsibility: the name must resolve here
+    /// (usually a CNAME). TLS is not managed by this server — with in-process
+    /// TLS the name must be covered by `--tls-cert`, and behind a reverse proxy
+    /// the proxy terminates TLS.
+    #[serde(default)]
+    pub custom_domain: String,
+}
+
+impl Default for BucketMeta {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            created_at: String::new(),
+            owner: String::new(),
+            perms: BTreeMap::new(),
+            visibility: default_visibility(),
+            object_count: 0,
+            total_bytes: 0,
+            custom_domain: String::new(),
+        }
+    }
 }
 
 fn default_visibility() -> String {
@@ -680,6 +705,7 @@ mod tests {
             visibility: default_visibility(),
             object_count: 0,
             total_bytes: 0,
+            custom_domain: String::new(),
         }
     }
 

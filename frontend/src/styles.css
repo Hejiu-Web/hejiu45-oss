@@ -584,3 +584,42 @@ pre.code {
   }
 }
 
+
+/* ---------- public access / access guide ---------- */
+
+.public-prefix {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  margin: 10px 0;
+}
+.public-prefix code {
+  flex: 1;
+  min-width: 200px;
+  word-break: break-all;
+}
+.domain-bind {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.guide-key-picker {
+  margin-bottom: 6px;
+}
+.guide-endpoints {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.guide-endpoints code {
+  word-break: break-all;
+  font-size: 12px;
+}
